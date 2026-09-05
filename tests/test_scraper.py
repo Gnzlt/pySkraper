@@ -322,3 +322,53 @@ async def test_dry_run_does_not_create_resume_state(library: Path, tmp_path: Pat
             )
 
     assert RunJournal(tmp_path / "run.jsonl").load() == set()
+
+
+@respx.mock
+async def test_interrupted_system_still_writes_what_it_resolved(library: Path, tmp_path: Path) -> None:
+    """The regression that cost a real card 510 games.
+
+    Media is downloaded and the journal is written per ROM, but the gamelist
+    used to be written only after a whole system finished.  A Ctrl-C or a fatal
+    API error part-way through discarded every resolved game in that system --
+    while the journal still recorded them as done, so no later run went back
+    for them.  Their artwork sat on the card with nothing referencing it.
+    """
+    from pyskraper.core.journal import RunJournal
+
+    for name in ("A.sfc", "B.sfc", "C.sfc"):
+        (library / "snes" / name).write_bytes(b"x" + name.encode())
+
+    seen = 0
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        # Resolve two games, then die the way a dropped connection does.
+        nonlocal seen
+        seen += 1
+        if seen > 2:
+            raise RuntimeError("connection lost mid-system")
+        return _ok({"jeu": GAME, "ssuser": SSUSER})
+
+    respx.get(f"{BASE}/ssuserInfos.php").mock(return_value=_ok({"ssuser": SSUSER}))
+    respx.get(f"{BASE}/jeuInfos.php").mock(side_effect=flaky)
+    respx.get(IMAGE_URL).mock(return_value=httpx.Response(200, content=b"x"))
+    respx.get(BOX_URL).mock(return_value=httpx.Response(200, content=b"x"))
+
+    journal = RunJournal(tmp_path / "run.jsonl")
+    journal.load()
+    with journal, pytest.raises(RuntimeError):
+        governor = QuotaGovernor()
+        async with ScreenScraperClient(CREDS, governor, retries=0) as client:
+            await client.user_info()
+            scraper = Scraper(_config(library), client, BatoceraWriter(), journal=journal)
+            await scraper.run(scan_tree(library))
+
+    gamelist = library / "snes" / "gamelist.xml"
+    assert gamelist.exists(), "an interrupted system must still leave a gamelist"
+    listed = {g.findtext("path") for g in ET.parse(gamelist).getroot().findall("game")}
+    assert len(listed) == 2
+
+    # The invariant: nothing is journalled as done unless it is in the gamelist,
+    # so whatever was lost gets retried instead of being skipped forever.
+    done = RunJournal(tmp_path / "run.jsonl").load()
+    assert {Path(p).name for p in done} == {p.lstrip("./") for p in listed if p}

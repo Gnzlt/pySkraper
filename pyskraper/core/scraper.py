@@ -34,6 +34,12 @@ __all__ = ["ProgressEvent", "RunStats", "Scraper"]
 
 log = logging.getLogger(__name__)
 
+# How many resolved games may sit in memory before the gamelist is written.
+# Small enough that a hard kill (power loss, a card yanked mid-run) costs
+# minutes rather than hours; large enough that a big system is not rewriting
+# a megabyte of XML every few games.
+CHECKPOINT_EVERY = 200
+
 
 @dataclass
 class RunStats:
@@ -108,6 +114,8 @@ class Scraper:
         self._limit = limit
         self._on_progress = on_progress
         self.stats = RunStats()
+        self._pending: list[tuple[Path, str, str, bool]] = []
+        """Journal records awaiting a gamelist write -- see `_flush_journal`."""
 
         prefs = config.preferences
         self._region_chain = build_region_chain(prefs.language, prefs.region, prefs.region_fallback)
@@ -142,10 +150,30 @@ class Scraper:
 
         log.info("Scraping %s (%d ROMs)", system.folder, len(roms))
         results: list[ScrapeResult] = []
+        written_through = 0
         concurrency = max(1, self._client.governor.concurrency)
         queue: asyncio.Queue[Path] = asyncio.Queue()
         for path in roms:
             queue.put_nowait(path)
+
+        def checkpoint() -> None:
+            """Write what is resolved so far, then journal it as done.
+
+            The ordering is the whole point.  A ROM is recorded in the journal
+            only once its `<game>` entry is on disk, because the journal is
+            what makes the next run skip it.  Recording first -- which is what
+            this used to do -- meant an interrupt threw away a system's
+            metadata while the journal still claimed the work was finished, and
+            no later run would ever go back for it.  The media was on the card;
+            the entry describing it was not.
+            """
+            nonlocal written_through
+            pending = results[written_through:]
+            if pending and not self._dry_run:
+                target = self._writer.write(pending, system.path)
+                log.info("Wrote %s (%d games)", target, len(pending))
+            written_through = len(results)
+            self._flush_journal()
 
         async def worker() -> None:
             while not self._stop.is_set():
@@ -157,14 +185,24 @@ class Scraper:
                     result = await self._process_rom(path, system)
                     if result is not None:
                         results.append(result)
+                        if len(results) - written_through >= CHECKPOINT_EVERY:
+                            # On the loop, not in a thread: `checkpoint` reads
+                            # `results` and advances `written_through`, and a
+                            # worker appending in between would mark a game
+                            # written that never was. One XML write costs far
+                            # less than the 200 round-trips that earned it.
+                            checkpoint()
                 finally:
                     queue.task_done()
 
-        await asyncio.gather(*(worker() for _ in range(concurrency)))
-
-        if results and not self._dry_run:
-            written = self._writer.write(results, system.path)
-            log.info("Wrote %s (%d games)", written, len(results))
+        try:
+            await asyncio.gather(*(worker() for _ in range(concurrency)))
+        finally:
+            # Quota, Ctrl-C, a fatal API error, a pulled card: every one of
+            # them ends the run here, and every one of them must still leave
+            # the games it already resolved on the card.  Synchronous on
+            # purpose -- an `await` in this path can itself be cancelled.
+            checkpoint()
 
     async def _process_rom(self, path: Path, system: ScannedSystem) -> ScrapeResult | None:
         if system.info is None:  # pragma: no cover - unknown systems are filtered before here
@@ -288,7 +326,20 @@ class Scraper:
         # Dry runs must not create resume state -- that would make the next real
         # run skip everything it only pretended to do.
         if self._journal is not None and not self._dry_run:
+            self._pending.append((path, system, method, matched))
+
+    def _flush_journal(self) -> None:
+        """Commit buffered records. Only ever called once a write has landed.
+
+        If the write raised, this is not reached: the records stay buffered,
+        the ROMs stay un-journalled, and the next run redoes them -- cheaply,
+        since their media is already on the card.
+        """
+        if self._journal is None:
+            return
+        for path, system, method, matched in self._pending:
             self._journal.record(path, system, method, matched=matched)
+        self._pending.clear()
 
     def _fail(self, system: ScannedSystem, path: Path, message: str) -> None:
         self.stats.failed += 1
