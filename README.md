@@ -5,9 +5,10 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
+  <a href="https://github.com/Gnzlt/pySkraper/releases/latest"><img src="https://img.shields.io/github/v/release/Gnzlt/pySkraper?color=blue" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/python-3.12%2B-blue.svg" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg" alt="Platform: macOS | Linux">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
 </p>
 
 > A lightweight, self-contained Python tool that downloads game metadata, box art, logos, screenshots, manuals, and gameplay videos from [ScreenScraper.fr](https://www.screenscraper.fr) and writes them straight into your handheld's SD card. Runs on macOS and Linux.
