@@ -175,12 +175,16 @@ def clean_orphans(
     *,
     apply: bool,
     writer: LibraryWriter | None = None,
+    on_progress: Callable[[Path], None] | None = None,
 ) -> tuple[int, int, list[str]]:
     """Remove orphan media and dead metadata entries.
 
     Never touches a ROM: everything removed here is regenerable by re-scraping,
     which is exactly why it is safe to remove at all. Returns
     ``(media removed, entries removed, errors)``.
+
+    ``on_progress`` is called with each media file as it is dealt with, so a
+    caller can show a bar rather than a silent pause.
     """
     media_removed = 0
     entries_removed = 0
@@ -188,6 +192,8 @@ def clean_orphans(
 
     for system in report.systems:
         for path in system.orphan_media:
+            if on_progress is not None:
+                on_progress(path)
             if apply:
                 try:
                     path.unlink()

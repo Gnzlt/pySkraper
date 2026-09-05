@@ -250,8 +250,8 @@ The paths above are macOS. On Linux the card mounts under `/run/media/<you>/SHAR
 pyskraper scrape --roms /run/media/$USER/SHARE/roms
 ```
 
-pySkraper keeps its own files — your saved answers in `pyskraper.yaml`, plus `data/` and
-`quarantine/` — inside its own folder. Nothing is installed elsewhere on your system, so you can
+pySkraper keeps its own files — your saved answers in `pyskraper.yaml`, plus `data/` — inside its
+own folder. Nothing is installed elsewhere on your system, so you can
 copy the whole folder to a USB stick and run it from any machine the card reader is plugged into.
 To delete it, delete the folder.
 
@@ -277,11 +277,11 @@ Run these after `source .venv/bin/activate`:
 
 Two commands can change files, and both do nothing until you add `--apply`:
 
-- `pyskraper dedupe --apply` moves duplicate games into a `quarantine/` folder **on your computer**,
-  not on the card, so nothing is lost. Only `--apply --delete` really deletes, and it asks you to
-  type the word `delete` first.
+- `pyskraper dedupe --apply` deletes duplicate games. It first shows you exactly what would go and
+  how much space it frees, then asks you to type the word `delete` — anything else cancels. Every
+  deleted path is written to a journal in `data/dedupe/` so you can see afterwards what went.
 - `pyskraper verify --clean-orphans --apply` removes artwork for games no longer on the card. It
-  never touches a game file.
+  asks first, and never touches a game file — everything it removes comes back from a re-scrape.
 
 ## If something goes wrong
 

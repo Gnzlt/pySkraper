@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from pyskraper.config import Config, ConfigError, load_config, save_config
+from pyskraper.config import Config, ConfigError, DedupeConfig, load_config, save_config
 
 
 def _write(path: Path, data: dict[str, object]) -> Path:
@@ -207,3 +207,20 @@ def test_saved_config_round_trips(tmp_path: Path) -> None:
 def test_save_leaves_no_part_file(tmp_path: Path) -> None:
     target = save_config(Config(), tmp_path / "config.yaml")
     assert not target.with_name(target.name + ".part").exists()
+
+
+def test_a_config_written_before_quarantine_was_removed_still_loads() -> None:
+    """`extra="forbid"` is for typos, not for keys this tool told users to write."""
+    config = DedupeConfig.model_validate(
+        {"detect": ["exact"], "action": "quarantine", "quarantine_dir": "/somewhere/q"}
+    )
+
+    # The intent behind `quarantine` was "act when I ask", and acting is now a
+    # delete -- one that still costs an --apply and a typed confirmation.
+    assert config.action == "delete"
+    assert not hasattr(config, "quarantine_dir")
+
+
+def test_report_only_survives_the_migration() -> None:
+    """The one setting that means "never act" must not be turned into a delete."""
+    assert DedupeConfig.model_validate({"action": "report-only"}).action == "report-only"

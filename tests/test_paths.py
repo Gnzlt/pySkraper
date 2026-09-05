@@ -107,7 +107,7 @@ def test_dist_packages_is_treated_the_same_as_site_packages(tmp_path: Path, monk
 def test_every_path_is_inside_the_base_directory(tmp_path: Path) -> None:
     paths.set_base_dir(tmp_path)
 
-    for candidate in (paths.config_path(), paths.cache_dir(), paths.quarantine_dir()):
+    for candidate in (paths.config_path(), paths.cache_dir(), paths.cache_path(paths.cache_dir())):
         assert candidate.is_relative_to(tmp_path), candidate
 
 
@@ -122,7 +122,7 @@ def test_no_default_path_points_at_a_system_location(tmp_path: Path) -> None:
     paths.set_base_dir(tmp_path)
     home = Path.home()
 
-    for candidate in (paths.config_path(), paths.cache_dir(), paths.quarantine_dir()):
+    for candidate in (paths.config_path(), paths.cache_dir(), paths.cache_path(paths.cache_dir())):
         assert not candidate.is_relative_to(home / ".config"), candidate
         assert not candidate.is_relative_to(home / "Library"), candidate
         assert not candidate.is_relative_to(home / ".cache"), candidate

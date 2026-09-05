@@ -2,8 +2,9 @@
 
 Everything here is about the refusals. The detection logic is tested in
 test_dedupe.py; what these tests pin down is that the command cannot be talked
-into destroying something by accident -- no --apply means no change, and
---delete --non-interactive is refused outright with no override.
+into destroying something by accident -- no --apply means no change, --apply
+still has to get past a typed confirmation, and --apply --non-interactive is
+refused outright with no override.
 """
 
 from __future__ import annotations
@@ -29,11 +30,7 @@ def library(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     config = tmp_path / "config.yaml"
     config.write_text(
-        "screenscraper:\n"
-        "  devid: x\n"
-        "  devpassword: y\n"
-        f"paths:\n  roms: {roms}\n  cache: {tmp_path / 'cache'}\n"
-        f"dedupe:\n  quarantine_dir: {tmp_path / 'quarantine'}\n"
+        f"screenscraper:\n  devid: x\n  devpassword: y\npaths:\n  roms: {roms}\n  cache: {tmp_path / 'cache'}\n"
     )
     monkeypatch.setenv("PYSKRAPER_CONFIG", str(config))
     for name in ("PYSKRAPER_ROMS", "PYSKRAPER_CACHE", "PYSKRAPER_DEVID", "PYSKRAPER_DEVPASSWORD"):
@@ -41,8 +38,8 @@ def library(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return roms
 
 
-def test_delete_with_non_interactive_is_refused(library: Path) -> None:
-    result = runner.invoke(app, ["dedupe", "--apply", "--delete", "--non-interactive"])
+def test_apply_with_non_interactive_is_refused(library: Path) -> None:
+    result = runner.invoke(app, ["dedupe", "--apply", "--non-interactive"])
 
     assert result.exit_code == 2
     assert "refused" in result.output.lower()
@@ -50,13 +47,13 @@ def test_delete_with_non_interactive_is_refused(library: Path) -> None:
     assert (library / "snes" / "Game (USA) [dup].sfc").exists()
 
 
-def test_delete_with_global_non_interactive_is_refused(library: Path) -> None:
+def test_apply_with_global_non_interactive_is_refused(library: Path) -> None:
     """The flag before the subcommand counts too.
 
     It used to be read by the callback and dropped, so this spelling walked
     straight past the refusal the spelling above hits.
     """
-    result = runner.invoke(app, ["--non-interactive", "dedupe", "--apply", "--delete"])
+    result = runner.invoke(app, ["--non-interactive", "dedupe", "--apply"])
 
     assert result.exit_code == 2
     assert "refused" in result.output.lower()
@@ -72,28 +69,31 @@ def test_reports_without_apply_and_changes_nothing(library: Path) -> None:
     assert (library / "snes" / "Game (USA).sfc").exists()
 
 
-def test_apply_quarantines_the_duplicate(library: Path, tmp_path: Path) -> None:
-    result = runner.invoke(app, ["dedupe", "--apply"])
-
-    assert result.exit_code == 0
-    assert not (library / "snes" / "Game (USA) [dup].sfc").exists()
-    assert (library / "snes" / "Game (USA).sfc").exists()
-    assert (tmp_path / "quarantine" / "snes" / "Game (USA) [dup].sfc").exists()
-
-
-def test_delete_aborts_unless_the_word_is_typed(library: Path) -> None:
-    result = runner.invoke(app, ["dedupe", "--apply", "--delete"], input="yes\n")
+def test_apply_aborts_unless_the_word_is_typed(library: Path) -> None:
+    result = runner.invoke(app, ["dedupe", "--apply"], input="yes\n")
 
     assert "Cancelled" in result.output
     assert (library / "snes" / "Game (USA) [dup].sfc").exists()
 
 
-def test_delete_proceeds_only_on_the_exact_confirmation(library: Path) -> None:
-    result = runner.invoke(app, ["dedupe", "--apply", "--delete"], input="delete\n")
+def test_apply_deletes_only_on_the_exact_confirmation(library: Path) -> None:
+    result = runner.invoke(app, ["dedupe", "--apply"], input="delete\n")
 
     assert result.exit_code == 0
     assert not (library / "snes" / "Game (USA) [dup].sfc").exists()
     assert (library / "snes" / "Game (USA).sfc").exists()
+    # Nothing was moved anywhere: the duplicate is gone, not relocated.
+    assert list(library.rglob("Game (USA) [dup].sfc")) == []
+
+
+def test_apply_names_the_journal_it_wrote(library: Path, tmp_path: Path) -> None:
+    """The one artefact a delete run leaves behind, so it has to be findable."""
+    result = runner.invoke(app, ["dedupe", "--apply"], input="delete\n")
+
+    assert result.exit_code == 0
+    journals = list((tmp_path / "cache" / "dedupe").glob("dedupe-*-delete.jsonl"))
+    assert len(journals) == 1
+    assert "Game (USA) [dup].sfc" in journals[0].read_text()
 
 
 def test_verify_reports_without_changing_anything(library: Path) -> None:
@@ -107,13 +107,36 @@ def test_verify_reports_without_changing_anything(library: Path) -> None:
     assert orphan.exists()
 
 
-def test_verify_clean_orphans_needs_apply(library: Path) -> None:
+def test_verify_clean_orphans_asks_before_removing_anything(library: Path) -> None:
     (library / "snes" / "images").mkdir()
     orphan = library / "snes" / "images" / "Ghost-image.png"
     orphan.write_bytes(b"art")
 
-    runner.invoke(app, ["verify", "--clean-orphans", "--apply"])
+    result = runner.invoke(app, ["verify", "--clean-orphans", "--apply"], input="n\n")
+
+    assert "Cancelled" in result.output
+    assert orphan.exists()
+
+
+def test_verify_clean_orphans_removes_only_media_once_confirmed(library: Path) -> None:
+    (library / "snes" / "images").mkdir()
+    orphan = library / "snes" / "images" / "Ghost-image.png"
+    orphan.write_bytes(b"art")
+
+    runner.invoke(app, ["verify", "--clean-orphans", "--apply"], input="y\n")
 
     assert not orphan.exists()
     # ROMs are never in scope for --clean-orphans.
     assert (library / "snes" / "Game (USA).sfc").exists()
+
+
+def test_verify_clean_orphans_non_interactive_skips_the_prompt(library: Path) -> None:
+    """Nothing here is a ROM, so scripting it is allowed -- unlike `dedupe --apply`."""
+    (library / "snes" / "images").mkdir()
+    orphan = library / "snes" / "images" / "Ghost-image.png"
+    orphan.write_bytes(b"art")
+
+    result = runner.invoke(app, ["verify", "--clean-orphans", "--apply", "--non-interactive"])
+
+    assert result.exit_code == 0
+    assert not orphan.exists()

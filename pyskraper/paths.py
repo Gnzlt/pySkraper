@@ -1,7 +1,7 @@
 """Where pySkraper keeps its things, and where it looks for SD cards.
 
-Everything the tool writes -- config, cache database, resume journals, logs, the
-dedupe quarantine -- lives under a single :func:`base_dir`.  Nothing is ever
+Everything the tool writes -- config, cache database, resume journals, logs,
+dedupe journals -- lives under a single :func:`base_dir`.  Nothing is ever
 written to ``~/.config``, ``~/Library`` or any other system location, so the
 whole folder can be copied to a USB stick and carried to another machine
 alongside the card reader.
@@ -31,14 +31,12 @@ __all__ = [
     "is_boot_volume",
     "is_writable",
     "mount_roots",
-    "quarantine_dir",
     "set_base_dir",
 ]
 
 CONFIG_FILENAME = "pyskraper.yaml"
 CACHE_DB_FILENAME = "pyskraper.db"
 _DATA_DIRNAME = "data"
-_QUARANTINE_DIRNAME = "quarantine"
 
 # Set by ``--data-dir``.  A module-level override rather than a parameter
 # threaded through every call site: the base directory is process-wide by
@@ -132,10 +130,6 @@ def cache_path(directory: Path) -> Path:
     caller's `config.paths.cache` may have been overridden and must win.
     """
     return Path(directory) / CACHE_DB_FILENAME
-
-
-def quarantine_dir() -> Path:
-    return base_dir() / _QUARANTINE_DIRNAME
 
 
 # --------------------------------------------------------------------------

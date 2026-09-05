@@ -16,17 +16,18 @@ and a saved config records the concrete profile rather than the request.
 from __future__ import annotations
 
 import copy
+import logging
 import os
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .core.atomic import atomic_text
 from .devices import DEFAULT_PROFILE, profile_defaults
 from .logging_setup import register_secret
-from .paths import CONFIG_FILENAME, boot_partition_beside, cache_dir, config_path, quarantine_dir
+from .paths import CONFIG_FILENAME, boot_partition_beside, cache_dir, config_path
 
 __all__ = [
     "AUTO_DEVICE",
@@ -42,6 +43,9 @@ __all__ = [
 # It is resolved during :func:`load_config`, so a `Config` never holds it and a
 # saved config records whichever concrete profile the card produced.
 AUTO_DEVICE = "auto"
+
+
+log = logging.getLogger(__name__)
 
 
 class ConfigError(Exception):
@@ -149,16 +153,35 @@ class ImagesConfig(_Model):
 
 class DedupeConfig(_Model):
     detect: list[str] = Field(default_factory=lambda: ["exact", "same-game"])
-    action: Literal["quarantine", "delete", "report-only"] = "quarantine"
-    quarantine_dir: Path = Field(default_factory=quarantine_dir)
+    action: Literal["delete", "report-only"] = "delete"
     keep_priority: list[str] = Field(
         default_factory=lambda: ["region:us", "verified", "latest-revision", "in-gamelist", "shortest-name"]
     )
 
-    @field_validator("quarantine_dir", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _expanduser(cls, value: Any) -> Any:
-        return _expand(value)
+    def _drop_quarantine(cls, value: Any) -> Any:
+        """Accept a config written before quarantine was removed.
+
+        `extra="forbid"` is right for typos and wrong for a setting this tool
+        itself told users to write, so the two dead keys are dropped rather than
+        rejected.  `action: quarantine` becomes `delete` because that is what it
+        meant -- "act on duplicates when I ask" -- and acting still costs an
+        `--apply` and a typed confirmation, so nothing goes without being asked.
+        """
+        if not isinstance(value, dict) or not ({"quarantine_dir", "action"} & value.keys()):
+            return value
+        value = dict(value)
+        if value.pop("quarantine_dir", None) is not None:
+            log.warning("dedupe.quarantine_dir is no longer used and was ignored; duplicates are deleted now.")
+        if value.get("action") == "quarantine":
+            value["action"] = "delete"
+            log.warning(
+                "dedupe.action: quarantine is gone — reading it as `delete`. "
+                "`dedupe --apply` deletes after you type `delete` to confirm; "
+                "set it to `report-only` if you would rather it never act."
+            )
+        return value
 
 
 class NetworkConfig(_Model):

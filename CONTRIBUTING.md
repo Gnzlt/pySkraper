@@ -60,7 +60,6 @@ pySkraper/
 ├── .venv/                         # project virtualenv (git-ignored)
 ├── pyskraper.yaml                 # your config (git-ignored, created by the wizard)
 ├── data/                          # cache db, journals, log (git-ignored)
-├── quarantine/                    # dedupe quarantine (git-ignored)
 ├── pyskraper/
 │   ├── __init__.py
 │   ├── __main__.py                # python -m pyskraper
@@ -95,7 +94,7 @@ pySkraper/
 │   │   ├── media.py               # asset planning + atomic downloads
 │   │   ├── scraper.py             # orchestrator, resume journal
 │   │   ├── naming.py              # filename cleaning + cataloguing tags
-│   │   ├── dedupe.py              # duplicate detection, keep rules, quarantine
+│   │   ├── dedupe.py              # duplicate detection, keep rules, delete plans
 │   │   ├── verify.py              # drift and orphan detection
 │   │   └── cache.py               # SQLite cache
 │   ├── output/
@@ -139,9 +138,10 @@ The project targets `ruff` with `line-length = 120` and `select = ["E","F","W","
 Please read these before submitting changes:
 
 1. **Never delete or overwrite ROM files.** Metadata and media are regenerable; ROMs are not.
-2. **Nothing deletes anything unless the user asked twice.** `dedupe` reports by default,
-   quarantines before deleting, and refuses `--non-interactive --delete`. `verify --clean-orphans`
-   removes media and metadata entries only, and must never gain the ability to remove a ROM.
+2. **Nothing deletes anything unless the user asked twice.** `dedupe` reports by default; `--apply`
+   prints the plan, then requires the word `delete` typed at a prompt, and refuses
+   `--non-interactive` outright. `verify --clean-orphans --apply` asks a plain yes/no, and removes
+   media and metadata entries only -- it must never gain the ability to remove a ROM.
 3. **No front-end-specific conditionals outside `pyskraper/output/`.** If a change needs one, the
    `Writer` abstraction is wrong -- fix the protocol instead.
 4. **Hash-first identification -- always.** Don't reintroduce a hashing size cap or make filename

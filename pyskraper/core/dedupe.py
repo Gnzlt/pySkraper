@@ -14,16 +14,22 @@ and left alone.  A duplicate left in place costs a few megabytes; a wrongly
 deleted ROM costs a file that may not be replaceable.
 
 **Dry run and real run are the same code path.**  The plan is built in full --
-every source path, every destination, every gamelist entry -- and only the last
-few syscalls are gated on ``apply``.  A report that came from different code
-than the action is a report that can lie.
+every file that would go, every gamelist entry -- and only the last few syscalls
+are gated on ``apply``.  A report that came from different code than the action
+is a report that can lie.
+
+Removal is a delete, not a move to a holding pen.  A quarantine folder reads as
+safety but rarely buys any: it fills a disk with files nobody ever looks at
+again, and the undo it promises is only ever exercised in the minutes right
+after the run -- exactly when the printed plan and the journal are still on
+screen.  So the second ask is the safety, the journal names every file by path
+before it is unlinked, and nothing is left behind to tidy up later.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import shutil
 import time
 from collections import defaultdict
 from collections.abc import Callable, Sequence
@@ -32,7 +38,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-from .atomic import atomic_binary
 from .cache import Cache
 from .hasher import hash_file
 from .models import EntryInfo
@@ -88,7 +93,6 @@ class DuplicateKind(StrEnum):
 
 class Action(StrEnum):
     REPORT_ONLY = "report-only"
-    QUARANTINE = "quarantine"
     DELETE = "delete"
 
 
@@ -487,16 +491,12 @@ def _partition(
 
 @dataclass
 class PlannedRemoval:
-    """One ROM's removal, resolved down to individual file operations."""
+    """One ROM's removal, resolved down to the individual files it takes with it."""
 
     entry: RomEntry
     reason: str
-    moves: list[tuple[Path, Path]] = field(default_factory=list)
-    """``(source, destination)`` for quarantine; destination is unused for delete."""
-
-    @property
-    def files(self) -> list[Path]:
-        return [source for source, _ in self.moves]
+    files: list[Path] = field(default_factory=list)
+    """The ROM itself, then any media only this ROM was using."""
 
     @property
     def total_bytes(self) -> int:
@@ -522,7 +522,7 @@ class RemovalPlan:
 
     @property
     def file_count(self) -> int:
-        return sum(len(removal.moves) for removal in self.removals)
+        return sum(len(removal.files) for removal in self.removals)
 
     @property
     def total_bytes(self) -> int:
@@ -534,10 +534,9 @@ def plan_removals(
     *,
     entries: Sequence[RomEntry],
     action: Action,
-    quarantine_dir: Path,
     writer: LibraryWriter | None = None,
 ) -> RemovalPlan:
-    """Turn a report into an exact list of file operations.
+    """Turn a report into an exact list of files to delete.
 
     Built in full whether or not it will be executed -- this is the single code
     path behind both the dry-run report and the real run, so the two cannot
@@ -558,7 +557,6 @@ def plan_removals(
             surviving_stems[entry.system_dir].add(entry.stem)
 
     media_by_system: dict[Path, dict[Path, str]] = {}
-    claimed: set[Path] = set()
 
     for group in report.actionable:
         for entry in group.removals:
@@ -569,13 +567,7 @@ def plan_removals(
             files = [entry.path]
             files.extend(_media_for(entry, surviving_stems[system_dir], media_by_system.get(system_dir, {})))
 
-            moves: list[tuple[Path, Path]] = []
-            for source in files:
-                destination = _quarantine_target(source, entry, quarantine_dir, claimed)
-                claimed.add(destination)
-                moves.append((source, destination))
-
-            plan.removals.append(PlannedRemoval(entry=entry, reason=group.label, moves=moves))
+            plan.removals.append(PlannedRemoval(entry=entry, reason=group.label, files=files))
             if entry.in_gamelist:
                 # Only what is actually listed: reporting a metadata entry that
                 # was never there would inflate the plan the user is agreeing to.
@@ -598,29 +590,6 @@ def _media_for(entry: RomEntry, surviving_stems: set[str], index: dict[Path, str
     return sorted(path for path, stem in index.items() if stem == entry.stem)
 
 
-def _quarantine_target(source: Path, entry: RomEntry, quarantine_dir: Path, claimed: set[Path]) -> Path:
-    """Mirror the card's layout under the quarantine root, so restoring is a move.
-
-    Never returns a path that already exists: an earlier quarantine run's files
-    are not something to overwrite.
-    """
-    try:
-        relative = source.relative_to(entry.system_dir)
-    except ValueError:
-        relative = Path(source.name)
-
-    target = quarantine_dir / entry.system / relative
-    if not target.exists() and target not in claimed:
-        return target
-
-    stem, suffix = target.stem, target.suffix
-    for counter in range(1, 1000):
-        candidate = target.with_name(f"{stem}~{counter}{suffix}")
-        if not candidate.exists() and candidate not in claimed:
-            return candidate
-    raise DedupeError(f"Cannot find a free quarantine name for {source}")
-
-
 # --------------------------------------------------------------------------
 # Execution
 # --------------------------------------------------------------------------
@@ -628,7 +597,6 @@ def _quarantine_target(source: Path, entry: RomEntry, quarantine_dir: Path, clai
 
 @dataclass
 class ActionOutcome:
-    moved: int = 0
     deleted: int = 0
     entries_unlisted: int = 0
     bytes_freed: int = 0
@@ -642,22 +610,29 @@ def apply_plan(
     apply: bool,
     journal_dir: Path,
     writer: LibraryWriter | None = None,
+    on_progress: Callable[[Path], None] | None = None,
 ) -> ActionOutcome:
     """Execute the plan, or rehearse it exactly.
 
     With ``apply=False`` every path is still resolved and every check still
-    runs; only the four calls that touch the filesystem are skipped.
+    runs; only the calls that touch the filesystem are skipped.
+
+    ``on_progress`` is called with each file as it is dealt with, in both modes.
+    Deleting several thousand files off a card is not instant, and a run that
+    prints nothing while it works is indistinguishable from a run that hung.
     """
     outcome = ActionOutcome()
     if plan.action is Action.REPORT_ONLY or not plan.removals:
         return outcome
 
-    handle = _ActionJournal(journal_dir, plan.action) if apply else None
+    handle = _ActionJournal(journal_dir) if apply else None
     outcome.journal = handle.path if handle else None
 
     try:
         for removal in plan.removals:
-            for source, destination in removal.moves:
+            for source in removal.files:
+                if on_progress is not None:
+                    on_progress(source)
                 if not source.exists():
                     # Planned from a scan that is now stale.  Not an error worth
                     # failing the run over, but never silently.
@@ -665,18 +640,12 @@ def apply_plan(
                     continue
                 size = source.stat().st_size
                 try:
-                    if plan.action is Action.QUARANTINE:
-                        if apply and handle is not None:
-                            _move(source, destination)
-                            handle.record("quarantine", source, destination, size, removal.reason)
-                        outcome.moved += 1
-                    else:
-                        if apply and handle is not None:
-                            # Journalled *before* the unlink: a record of a file
-                            # that survived is recoverable, the reverse is not.
-                            handle.record("delete", source, None, size, removal.reason)
-                            source.unlink()
-                        outcome.deleted += 1
+                    if apply and handle is not None:
+                        # Journalled *before* the unlink: a record naming a file
+                        # that survived is harmless, the reverse loses the name.
+                        handle.record(source, size, removal.reason)
+                        source.unlink()
+                    outcome.deleted += 1
                     outcome.bytes_freed += size
                 except OSError as exc:
                     outcome.errors.append(f"{source}: {exc}")
@@ -694,54 +663,29 @@ def apply_plan(
     return outcome
 
 
-def _move(source: Path, destination: Path) -> None:
-    """Move a file across devices without ever risking the source.
-
-    The card and the quarantine directory are different filesystems, so this is
-    a copy followed by an unlink.  The copy goes to ``<dest>.part``, is flushed
-    and size-checked, and only then replaces the destination -- and only then is
-    the original removed.  A failure at any point leaves the source untouched.
-    """
-    expected = source.stat().st_size
-    # atomic_binary owns the part file, the fsync, the replace and the unlink
-    # on failure. The size check stays here and stays *inside* the context: a
-    # short copy has to raise before the replace, so the destination is never
-    # created and the source is never reached.
-    with atomic_binary(destination) as dst:
-        with open(source, "rb") as src:
-            shutil.copyfileobj(src, dst, length=1024 * 1024)
-        if dst.tell() != expected:
-            raise OSError(f"short copy of {source}: {dst.tell()} of {expected} bytes")
-
-    # After the replace rather than before it: a copystat failure now leaves a
-    # complete destination and an intact source, which is the safe direction.
-    shutil.copystat(source, destination)
-    source.unlink()
-
-
 class _ActionJournal:
-    """Append-only record of every file this run moved or deleted.
+    """Append-only record of every file this run deleted.
 
-    The point is reversibility: source and destination for each move, so a
-    mistaken quarantine can be undone by reading the file back, and a mistaken
-    delete can at least be named precisely.
+    Deletion is not reversible, so the journal cannot promise an undo.  What it
+    can do is name what went and why, in a file that outlives the terminal
+    scrollback -- enough to re-download a ROM, or to prove a keep rule chose
+    wrongly before the same run is repeated on another card.
     """
 
-    def __init__(self, directory: Path, action: Action) -> None:
+    def __init__(self, directory: Path) -> None:
         directory = Path(directory).expanduser()
         directory.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        self.path = directory / f"dedupe-{stamp}-{action.value}.jsonl"
+        self.path = directory / f"dedupe-{stamp}-delete.jsonl"
         self._handle = open(self.path, "a", encoding="utf-8")  # noqa: SIM115 - closed in close()
 
-    def record(self, action: str, source: Path, destination: Path | None, size: int, reason: str) -> None:
+    def record(self, source: Path, size: int, reason: str) -> None:
         self._handle.write(
             json.dumps(
                 {
                     "at": time.time(),
-                    "action": action,
+                    "action": "delete",
                     "src": str(source),
-                    "dst": str(destination) if destination else None,
                     "bytes": size,
                     "reason": reason,
                 },

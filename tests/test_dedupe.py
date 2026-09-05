@@ -2,7 +2,7 @@
 
 This is the only code in the project that can destroy a user's ROM collection,
 so the tests lean hard on the refusals: that a report changes nothing, that
-conflicting rules skip a group rather than guess, and that a quarantine can be
+conflicting rules skip a group rather than guess, and that a delete run touches
 undone byte-for-byte.
 """
 
@@ -232,9 +232,7 @@ def test_report_only_action_plans_nothing(tmp_path: Path) -> None:
         entries = build_entries(scan_tree(roms), cache=cache, writer=BatoceraWriter())
     report = find_duplicates(entries, keep_priority=KEEP_PRIORITY)
 
-    plan = plan_removals(
-        report, entries=entries, action=Action.REPORT_ONLY, quarantine_dir=tmp_path / "q", writer=BatoceraWriter()
-    )
+    plan = plan_removals(report, entries=entries, action=Action.REPORT_ONLY, writer=BatoceraWriter())
     assert plan.removals == []
 
 
@@ -245,26 +243,21 @@ def test_dry_run_touches_nothing(tmp_path: Path) -> None:
     with Cache(tmp_path / "c.db") as cache:
         entries = build_entries(scan_tree(roms), cache=cache, writer=BatoceraWriter())
     report = find_duplicates(entries, keep_priority=KEEP_PRIORITY)
-    plan = plan_removals(
-        report, entries=entries, action=Action.QUARANTINE, quarantine_dir=tmp_path / "q", writer=BatoceraWriter()
-    )
+    plan = plan_removals(report, entries=entries, action=Action.DELETE, writer=BatoceraWriter())
     outcome = apply_plan(plan, apply=False, journal_dir=tmp_path / "j", writer=BatoceraWriter())
 
-    assert outcome.moved == 2  # the ROM and its image, counted but not moved
+    assert outcome.deleted == 2  # the ROM and its image, counted but not deleted
     assert {path: path.read_bytes() for path in snes.rglob("*") if path.is_file()} == before
-    assert not (tmp_path / "q").exists()
+    assert not (tmp_path / "j").exists()
 
 
-def test_quarantine_moves_exactly_the_intended_files(tmp_path: Path) -> None:
+def test_delete_removes_exactly_the_intended_files(tmp_path: Path) -> None:
     roms, snes = _library(tmp_path)
-    quarantine = tmp_path / "q"
 
     with Cache(tmp_path / "c.db") as cache:
         entries = build_entries(scan_tree(roms), cache=cache, writer=BatoceraWriter())
     report = find_duplicates(entries, keep_priority=KEEP_PRIORITY)
-    plan = plan_removals(
-        report, entries=entries, action=Action.QUARANTINE, quarantine_dir=quarantine, writer=BatoceraWriter()
-    )
+    plan = plan_removals(report, entries=entries, action=Action.DELETE, writer=BatoceraWriter())
     apply_plan(plan, apply=True, journal_dir=tmp_path / "j", writer=BatoceraWriter())
 
     # The duplicate and its artwork are gone; everything else is untouched.
@@ -274,34 +267,28 @@ def test_quarantine_moves_exactly_the_intended_files(tmp_path: Path) -> None:
     assert (snes / "images" / "Game (USA)-image.png").read_bytes() == b"art-keep"
     assert (snes / "Other (USA).sfc").exists()
 
-    # And they are intact in quarantine, under the card's own layout.
-    assert (quarantine / "snes" / "Game (USA) [dup].sfc").read_bytes() == b"identical content"
-    assert (quarantine / "snes" / "images" / "Game (USA) [dup]-image.png").read_bytes() == b"art-dup"
 
-
-def test_restoring_from_quarantine_returns_the_library_bit_for_bit(tmp_path: Path) -> None:
-    """The milestone's exit criterion: a mistaken run is fully reversible."""
+def test_the_journal_names_every_file_that_was_deleted(tmp_path: Path) -> None:
+    """Deletion cannot be undone, so the record of what went is the whole safety net."""
     roms, snes = _library(tmp_path)
-    quarantine = tmp_path / "q"
-    before = {path.relative_to(snes): path.read_bytes() for path in sorted(snes.rglob("*")) if path.is_file()}
+    doomed = {snes / "Game (USA) [dup].sfc", snes / "images" / "Game (USA) [dup]-image.png"}
 
     with Cache(tmp_path / "c.db") as cache:
         entries = build_entries(scan_tree(roms), cache=cache, writer=BatoceraWriter())
     report = find_duplicates(entries, keep_priority=KEEP_PRIORITY)
-    plan = plan_removals(
-        report, entries=entries, action=Action.QUARANTINE, quarantine_dir=quarantine, writer=BatoceraWriter()
-    )
+    plan = plan_removals(report, entries=entries, action=Action.DELETE, writer=BatoceraWriter())
     outcome = apply_plan(plan, apply=True, journal_dir=tmp_path / "j", writer=BatoceraWriter())
 
-    # Replay the journal backwards, which is all a restore is.
     assert outcome.journal is not None
+    recorded = set()
     for line in outcome.journal.read_text().splitlines():
         record = json.loads(line)
-        assert record["action"] == "quarantine"
-        Path(record["dst"]).rename(record["src"])
+        assert record["action"] == "delete"
+        assert record["reason"]
+        recorded.add(Path(record["src"]))
 
-    after = {path.relative_to(snes): path.read_bytes() for path in sorted(snes.rglob("*")) if path.is_file()}
-    assert after == before
+    assert recorded == doomed
+    assert not any(path.exists() for path in doomed)
 
 
 def test_media_shared_with_a_surviving_rom_is_never_removed(tmp_path: Path) -> None:
@@ -316,30 +303,26 @@ def test_media_shared_with_a_surviving_rom_is_never_removed(tmp_path: Path) -> N
     with Cache(tmp_path / "c.db") as cache:
         entries = build_entries(scan_tree(roms), cache=cache, writer=BatoceraWriter())
     report = find_duplicates(entries, keep_priority=KEEP_PRIORITY)
-    plan = plan_removals(
-        report, entries=entries, action=Action.QUARANTINE, quarantine_dir=tmp_path / "q", writer=BatoceraWriter()
-    )
+    plan = plan_removals(report, entries=entries, action=Action.DELETE, writer=BatoceraWriter())
     apply_plan(plan, apply=True, journal_dir=tmp_path / "j", writer=BatoceraWriter())
 
     assert (snes / "images" / "Game-image.png").read_bytes() == b"shared art"
 
 
-def test_quarantine_never_overwrites_an_earlier_run(tmp_path: Path) -> None:
+def test_apply_reports_progress_for_every_file(tmp_path: Path) -> None:
+    """A long run has to say something while it works, in both modes."""
     roms, _snes = _library(tmp_path)
-    quarantine = tmp_path / "q"
-    (quarantine / "snes").mkdir(parents=True)
-    (quarantine / "snes" / "Game (USA) [dup].sfc").write_bytes(b"from an earlier run")
 
     with Cache(tmp_path / "c.db") as cache:
         entries = build_entries(scan_tree(roms), cache=cache, writer=BatoceraWriter())
     report = find_duplicates(entries, keep_priority=KEEP_PRIORITY)
-    plan = plan_removals(
-        report, entries=entries, action=Action.QUARANTINE, quarantine_dir=quarantine, writer=BatoceraWriter()
-    )
-    apply_plan(plan, apply=True, journal_dir=tmp_path / "j", writer=BatoceraWriter())
+    plan = plan_removals(report, entries=entries, action=Action.DELETE, writer=BatoceraWriter())
 
-    assert (quarantine / "snes" / "Game (USA) [dup].sfc").read_bytes() == b"from an earlier run"
-    assert (quarantine / "snes" / "Game (USA) [dup]~1.sfc").read_bytes() == b"identical content"
+    seen: list[Path] = []
+    apply_plan(plan, apply=False, journal_dir=tmp_path / "j", writer=BatoceraWriter(), on_progress=seen.append)
+
+    assert len(seen) == plan.file_count
+    assert seen == [path for removal in plan.removals for path in removal.files]
 
 
 def test_removal_drops_the_gamelist_entry_too(tmp_path: Path) -> None:
@@ -354,9 +337,7 @@ def test_removal_drops_the_gamelist_entry_too(tmp_path: Path) -> None:
     with Cache(tmp_path / "c.db") as cache:
         entries = build_entries(scan_tree(roms), cache=cache, writer=BatoceraWriter())
     report = find_duplicates(entries, keep_priority=KEEP_PRIORITY)
-    plan = plan_removals(
-        report, entries=entries, action=Action.QUARANTINE, quarantine_dir=tmp_path / "q", writer=BatoceraWriter()
-    )
+    plan = plan_removals(report, entries=entries, action=Action.DELETE, writer=BatoceraWriter())
     outcome = apply_plan(plan, apply=True, journal_dir=tmp_path / "j", writer=BatoceraWriter())
 
     assert outcome.entries_unlisted == 1

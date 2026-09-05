@@ -37,9 +37,10 @@ the `images` extra (`pip install -e ".[dev,images]"`) or ten image tests skip si
 The project's standing rules, for reference — a PR that changes any of these needs to say so
 explicitly and explain why:
 
-- ROM files are never deleted or overwritten. Metadata and media are regenerable; ROMs are not.
-- Nothing deletes anything unless asked twice: `dedupe` reports by default, quarantines before it
-  deletes, and refuses `--non-interactive --delete`.
+- ROM files are never deleted or overwritten, except down `dedupe --apply`'s confirmed path.
+  Metadata and media are regenerable; ROMs are not.
+- Nothing deletes anything unless asked twice: `dedupe` reports by default, prints the plan, and
+  requires the word `delete` typed at a prompt; `--apply --non-interactive` is refused.
 - `verify --clean-orphans` removes media and gamelist entries only, never a ROM.
 - Writes to the card go through `core/atomic.py` (`.part` → `fsync` → `os.replace`).
 

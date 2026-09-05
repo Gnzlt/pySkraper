@@ -46,20 +46,25 @@ suite still reports success while having tested none of the local resize path. C
 This is the part to get right. The tool operates on removable media holding files a user may not be
 able to replace, and there is no Trash on an SD card.
 
-- **Never delete or overwrite a ROM file.** Metadata and media are regenerable and the tool rewrites
-  them freely; ROMs are not. This applies to your own shell commands during development as much as
-  to the code.
+- **Never delete or overwrite a ROM file, except down `dedupe`'s one confirmed path.** Metadata and
+  media are regenerable and the tool rewrites them freely; ROMs are not. This applies to your own
+  shell commands during development as much as to the code. No other code path may grow the ability
+  to remove a ROM.
 - **Nothing deletes anything unless asked twice.** `dedupe` reports and changes nothing by default;
-  `--apply` quarantines (moves to a local folder on the computer, not the card); `--delete` requires
-  `--apply` *and* an interactive confirmation; `--non-interactive --delete` is refused outright,
-  with no override flag. Any new destructive capability takes this same shape.
+  `--apply` requires an interactive confirmation typed as the word `delete`; `--apply
+  --non-interactive` is refused outright, with no override flag. There is no quarantine and no
+  holding pen -- the confirmation and the journal are the safety, not a folder full of files nobody
+  revisits. Any new destructive capability takes this same shape.
+- **A destructive run shows a plan first, then progress.** The user agrees to counts and a size
+  before anything happens, and sees a bar while it does. A silent pause on a card full of files is
+  indistinguishable from a hang.
 - **`verify --clean-orphans` removes media and gamelist entries only.** It must never gain the
   ability to remove a ROM.
 - **Atomic writes for anything touching the card**, via `core/atomic.py`: write `<target>.part`,
   `fsync`, then `os.replace`. The card can be pulled mid-write.
-- **Quarantine moves are copy-verify-unlink, never `shutil.move`.** The card and the quarantine
-  directory are different filesystems. The copy is fsynced and size-checked before the original is
-  unlinked, so a failure at any point leaves the source intact.
+- **Every deleted path is journalled before the `unlink`**, JSONL flushed per line, under
+  `paths.base_dir()`. Deletion cannot be undone, so the journal is the only record of what went and
+  why; writing it after the fact would lose exactly the entries a crash makes interesting.
 
 ## Architecture invariants
 
@@ -72,7 +77,7 @@ able to replace, and there is no Trash on an SD card.
   size cap. The chain is cache → hashes → disc serial → `romnom`+size → search
   (`core/identify.py:5`). Do not make filename matching primary and do not reintroduce a hashing
   size cap; both are deliberate, and both have been proposed as "simplifications" before.
-- **All state lives under `paths.base_dir()`** — config, cache, journals, logs, quarantine. Never
+- **All state lives under `paths.base_dir()`** — config, cache, journals, logs. Never
   `~/.config`, `~/Library`, `~/.cache` or any other system location, so the whole folder can be
   copied to a USB stick and run from any machine. `tests/test_paths.py` and `tests/test_wizard.py`
   guard this; the wizard test runs with `$HOME` pointed at an empty directory and asserts it stays

@@ -137,7 +137,7 @@ def main(
     version: Annotated[bool, typer.Option("--version", help="Show the version and exit.")] = False,
     data_dir: Annotated[
         Path | None,
-        typer.Option("--data-dir", help="Where config, cache and quarantine live. Defaults to this folder."),
+        typer.Option("--data-dir", help="Where config, cache, logs and journals live. Defaults to this folder."),
     ] = None,
     non_interactive: Annotated[bool, typer.Option("--non-interactive", help="Never prompt. For cron and CI.")] = False,
 ) -> None:
@@ -867,17 +867,12 @@ def dedupe(
     system: Annotated[list[str] | None, typer.Option("--system", "-s", help="Only these systems.")] = None,
     roms: Annotated[Path | None, typer.Option("--roms", help="ROM root.")] = None,
     apply_changes: Annotated[
-        bool, typer.Option("--apply", help="Actually move or delete. Without this, nothing changes.")
-    ] = False,
-    delete: Annotated[
-        bool, typer.Option("--delete", help="Delete instead of quarantining. Requires --apply and a confirmation.")
+        bool,
+        typer.Option("--apply", help="Delete the duplicates, after a confirmation. Without this, nothing changes."),
     ] = False,
     non_interactive: Annotated[
-        bool, typer.Option("--non-interactive", help="Never prompt. Refuses to combine with --delete.")
+        bool, typer.Option("--non-interactive", help="Never prompt. Refuses to combine with --apply.")
     ] = False,
-    quarantine_dir: Annotated[
-        Path | None, typer.Option("--quarantine-dir", help="Where quarantined files go (on the Mac).")
-    ] = None,
     detect: Annotated[
         list[str] | None, typer.Option("--detect", help="`exact`, `same-game`, or both (the default).")
     ] = None,
@@ -900,17 +895,18 @@ def dedupe(
 
     # Refused before any work: an unattended irreversible delete is not a
     # feature, and there is no flag that makes it one.
-    if delete and unattended:
+    if apply_changes and unattended:
         _fail(
-            "--delete cannot be combined with --non-interactive.\n"
-            "Deleting ROMs unattended is refused outright. Use --apply on its own to quarantine instead.",
+            "--apply cannot be combined with --non-interactive.\n"
+            "Deleting ROMs unattended is refused outright. Run it without --non-interactive "
+            "and confirm at the prompt, or drop --apply for a report.",
             EXIT_CONFIG,
         )
 
     config, _roms_root, known, writer = _hygiene_setup(config_path, roms, system)
-    action = Action.DELETE if delete else Action(config.dedupe.action)
+    action = Action(config.dedupe.action)
     if not apply_changes:
-        console.print("[dim]Report only — nothing will be moved or deleted. Add --apply to act.[/]")
+        console.print("[dim]Report only — nothing will be deleted. Add --apply to act.[/]")
 
     total_roms = sum(len(entry.roms) for entry in known)
     cache = Cache(cache_path(config.paths.cache))
@@ -940,34 +936,32 @@ def dedupe(
             console.print("\n[green]Nothing to do.[/]")
             raise typer.Exit(EXIT_OK)
 
-        target_dir = quarantine_dir or config.dedupe.quarantine_dir
-        plan = plan_removals(
-            report,
-            entries=entries,
-            action=action,
-            quarantine_dir=target_dir,
-            writer=writer,
-        )
+        plan = plan_removals(report, entries=entries, action=action, writer=writer)
 
         if action is Action.REPORT_ONLY:
-            console.print("\n[dim]dedupe.action is `report-only` — set it to `quarantine` to act.[/]")
+            console.print("\n[dim]dedupe.action is `report-only` — set it to `delete` to act.[/]")
             raise typer.Exit(EXIT_OK)
 
-        _print_removal_plan(plan, target_dir)
+        _print_removal_plan(plan)
 
         if not apply_changes:
-            console.print(
-                "\n[bold]Nothing was changed.[/] Re-run with [cyan]--apply[/] to "
-                + ("delete these files." if action is Action.DELETE else f"move them to {target_dir}.")
-            )
+            console.print("\n[bold]Nothing was changed.[/] Re-run with [cyan]--apply[/] to delete these files.")
             raise typer.Exit(EXIT_OK)
 
-        if action is Action.DELETE and not _confirm_delete(plan):
+        if not _confirm_delete(plan):
             console.print("[yellow]Cancelled.[/] Nothing was changed.")
             raise typer.Exit(EXIT_OK)
 
-        outcome = apply_plan(plan, apply=True, journal_dir=config.paths.cache / "dedupe", writer=writer)
-        _print_outcome(outcome, action, target_dir)
+        with _index_progress() as progress:
+            task = progress.add_task("Deleting", total=plan.file_count)
+            outcome = apply_plan(
+                plan,
+                apply=True,
+                journal_dir=config.paths.cache / "dedupe",
+                writer=writer,
+                on_progress=lambda _path: progress.update(task, advance=1),
+            )
+        _print_outcome(outcome)
         raise typer.Exit(EXIT_PARTIAL if outcome.errors else EXIT_OK)
     finally:
         cache.close()
@@ -980,7 +974,7 @@ def _confirm_delete(plan: RemovalPlan) -> bool:
         f"{format_bytes(plan.total_bytes)}, including {plan.rom_count} ROM(s).[/]"
     )
     console.print("[bold red]Removable media has no Trash. This cannot be undone.[/]")
-    console.print("[dim]Quarantining instead (drop --delete) is reversible with a single move.[/]")
+    console.print("[dim]Every deleted path is written to a journal first, so you can see what went.[/]")
     answer: str = typer.prompt("Type 'delete' to confirm", default="", show_default=False)
     return answer.strip().lower() == "delete"
 
@@ -1024,49 +1018,42 @@ def _print_dedupe_report(report: DedupeReport, *, show_all: bool) -> None:
     console.print(summary)
 
 
-def _print_removal_plan(plan: RemovalPlan, target_dir: Path) -> None:
-    verb = "Delete" if plan.action is Action.DELETE else "Quarantine"
-    table = Table(title=f"{verb} plan", show_header=False)
+def _print_removal_plan(plan: RemovalPlan) -> None:
+    table = Table(title="Delete plan", show_header=False)
     table.add_row("ROMs", str(plan.rom_count))
     table.add_row("Files in total", f"{plan.file_count}   [dim](ROMs plus their media)[/]")
     table.add_row("Metadata entries", str(sum(len(paths) for paths in plan.entries_to_unlist.values())))
     table.add_row("Size", format_bytes(plan.total_bytes))
-    if plan.action is Action.QUARANTINE:
-        table.add_row("Destination", str(target_dir))
     console.print()
     console.print(table)
 
 
-def _print_outcome(outcome: ActionOutcome, action: Action, target_dir: Path) -> None:
+def _print_outcome(outcome: ActionOutcome) -> None:
     table = Table(title="Done", show_header=False)
-    if action is Action.QUARANTINE:
-        table.add_row("Moved to quarantine", str(outcome.moved))
-    else:
-        table.add_row("Deleted", str(outcome.deleted))
+    table.add_row("Deleted", str(outcome.deleted))
     table.add_row("Metadata entries removed", str(outcome.entries_unlisted))
     table.add_row("Space reclaimed", format_bytes(outcome.bytes_freed))
     if outcome.journal:
-        table.add_row("Journal", str(outcome.journal))
+        table.add_row("Journal", f"{outcome.journal}   [dim](every path this run removed)[/]")
     console.print(table)
 
-    if action is Action.QUARANTINE:
-        console.print(
-            f"[dim]To undo: move the tree under {target_dir} back into place, then re-run "
-            "`pyskraper scrape` to restore the metadata entries from cache (no requests).[/]"
-        )
     for error in outcome.errors:
         err_console.print(f"[yellow]![/] {error}")
 
 
 @app.command()
 def verify(
+    ctx: typer.Context,
     system: Annotated[list[str] | None, typer.Option("--system", "-s", help="Only these systems.")] = None,
     roms: Annotated[Path | None, typer.Option("--roms", help="ROM root.")] = None,
     clean_orphans_flag: Annotated[
         bool, typer.Option("--clean-orphans", help="Remove media and metadata entries whose ROM is gone.")
     ] = False,
     apply_changes: Annotated[
-        bool, typer.Option("--apply", help="Actually clean. Without this, nothing changes.")
+        bool, typer.Option("--apply", help="Actually clean, after a confirmation. Without this, nothing changes.")
+    ] = False,
+    non_interactive: Annotated[
+        bool, typer.Option("--non-interactive", help="Skip the confirmation prompt and clean straight away.")
     ] = False,
     no_rehash: Annotated[
         bool, typer.Option("--no-rehash", help="Skip content re-hashing (much faster, finds no drift).")
@@ -1105,17 +1092,53 @@ def verify(
             console.print("\n[dim]Add --clean-orphans to remove the leftovers (then --apply to do it).[/]")
         raise typer.Exit(EXIT_OK if report.clean else EXIT_PARTIAL)
 
-    media, entries, errors = clean_orphans(report, apply=apply_changes, writer=writer)
-    if apply_changes:
-        console.print(f"\n[green]✓[/] Removed {media} orphan media file(s) and {entries} metadata entry/entries.")
-    else:
+    if not apply_changes:
+        media, entries, _errors = clean_orphans(report, apply=False, writer=writer)
         console.print(
             f"\n[bold]Would remove[/] {media} orphan media file(s) and {entries} metadata entry/entries "
             f"({format_bytes(report.orphan_bytes)}). Nothing was changed — add --apply."
         )
+        raise typer.Exit(EXIT_OK)
+
+    # The dry run is the thing being agreed to, so it runs first and its own
+    # numbers -- not the report's -- are what the prompt quotes.
+    media, entries, _errors = clean_orphans(report, apply=False, writer=writer)
+    if media == 0 and entries == 0:
+        console.print("\n[green]Nothing to clean.[/]")
+        raise typer.Exit(EXIT_OK)
+
+    unattended = non_interactive or _state(ctx).non_interactive
+    if not unattended and not _confirm_clean(media, entries, report.orphan_bytes):
+        console.print("[yellow]Cancelled.[/] Nothing was changed.")
+        raise typer.Exit(EXIT_OK)
+
+    with _index_progress() as progress:
+        task = progress.add_task("Cleaning", total=media)
+        media, entries, errors = clean_orphans(
+            report,
+            apply=True,
+            writer=writer,
+            on_progress=lambda _path: progress.update(task, advance=1),
+        )
+    console.print(f"\n[green]✓[/] Removed {media} orphan media file(s) and {entries} metadata entry/entries.")
     for error in errors:
         err_console.print(f"[yellow]![/] {error}")
     raise typer.Exit(EXIT_PARTIAL if errors else EXIT_OK)
+
+
+def _confirm_clean(media: int, entries: int, orphan_bytes: int) -> bool:
+    """A plain yes/no, not the word `delete` that `dedupe` demands.
+
+    The ceremony is scaled to what is at stake. Nothing here is a ROM: orphan
+    media and dead metadata entries both come back from a re-scrape, so the ask
+    is for attention, not for a second thought.
+    """
+    console.print(
+        f"\n[bold]About to remove {media} orphan media file(s) ({format_bytes(orphan_bytes)}) "
+        f"and {entries} metadata entry/entries.[/]"
+    )
+    console.print("[dim]No ROM is touched. Everything removed here is restored by re-running `pyskraper scrape`.[/]")
+    return typer.confirm("Proceed?", default=False)
 
 
 def _print_verify_report(report: VerifyReport, *, show_all: bool, rehashed: bool) -> None:
