@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtualenv
+.venv/
+venv/
+
+# Tooling caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
+._*
+
+# Secrets -- the config holds live ScreenScraper credentials.
+pyskraper.yaml
+config.yaml
+*.env
+.env
+
+# Portable layout, written beside the tool at runtime.
+data/
+quarantine/
+
+# Working notes. Not published.
+docs/

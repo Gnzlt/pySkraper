@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # `images` matters: Pillow is an optional extra, and without it the whole
+      # of tests/test_images.py skips silently -- ten tests covering the only
+      # path that writes to the card by itself.
+      - name: Install
+        run: pip install -e ".[dev,images]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format
+        run: ruff format --check .
+
+      - name: Types
+        run: mypy pyskraper/
+
+      # No `-m integration`: that marker is deselected by pyproject, which is
+      # what keeps a plain test run from spending real ScreenScraper quota.
+      - name: Tests
+        run: pytest
