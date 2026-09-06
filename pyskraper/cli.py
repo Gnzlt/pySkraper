@@ -1101,17 +1101,19 @@ def verify(
     _print_verify_report(report, show_all=show_all, rehashed=not no_rehash)
 
     if not clean_orphans_flag:
-        if report.orphan_media or report.missing_roms:
+        if report.orphan_media or report.missing_roms or report.legacy_media:
             console.print("\n[dim]Add --clean-orphans to remove the leftovers (then --apply to do it).[/]")
         raise typer.Exit(EXIT_OK if report.clean else EXIT_PARTIAL)
 
     media, entries, errors = clean_orphans(report, apply=apply_changes, writer=writer)
     if apply_changes:
-        console.print(f"\n[green]✓[/] Removed {media} orphan media file(s) and {entries} metadata entry/entries.")
+        console.print(
+            f"\n[green]✓[/] Removed {media} orphan/legacy media file(s) and {entries} metadata entry/entries."
+        )
     else:
         console.print(
-            f"\n[bold]Would remove[/] {media} orphan media file(s) and {entries} metadata entry/entries "
-            f"({format_bytes(report.orphan_bytes)}). Nothing was changed — add --apply."
+            f"\n[bold]Would remove[/] {media} orphan/legacy media file(s) and {entries} metadata entry/entries "
+            f"({format_bytes(report.orphan_bytes + report.legacy_bytes)}). Nothing was changed — add --apply."
         )
     for error in errors:
         err_console.print(f"[yellow]![/] {error}")
@@ -1125,13 +1127,16 @@ def _print_verify_report(report: VerifyReport, *, show_all: bool, rehashed: bool
     table.add_column("Drifted", justify="right")
     table.add_column("Missing", justify="right")
     table.add_column("Orphan media", justify="right")
+    table.add_column("Legacy media", justify="right")
     table.add_column("Not scraped", justify="right")
 
     for entry in report.systems:
         drift = f"[red]{len(entry.drifted)}[/]" if entry.drifted else "0"
         missing = f"[yellow]{len(entry.missing_roms)}[/]" if entry.missing_roms else "0"
         orphan = f"[yellow]{len(entry.orphan_media)}[/]" if entry.orphan_media else "0"
-        table.add_row(entry.system, str(entry.roms), drift, missing, orphan, str(len(entry.unlisted_roms)))
+        legacy_count = sum(len(files) for _folder, files in entry.legacy_media)
+        legacy = f"[yellow]{legacy_count}[/]" if legacy_count else "0"
+        table.add_row(entry.system, str(entry.roms), drift, missing, orphan, legacy, str(len(entry.unlisted_roms)))
     console.print(table)
 
     if not rehashed:
@@ -1151,6 +1156,10 @@ def _print_verify_report(report: VerifyReport, *, show_all: bool, rehashed: bool
             console.print(f"\n[red]Unreadable[/] in {entry.system}:")
             for path, reason in entry.unreadable[:limit]:
                 console.print(f"  {path.name}: {reason}")
+        if entry.legacy_media:
+            console.print(f"\n[yellow]Legacy scraper folders[/] in {entry.system}:")
+            for folder, files in entry.legacy_media[:limit]:
+                console.print(f"  {folder.name}/  [dim]({len(files)} file(s))[/]")
 
     if report.drifted:
         console.print(

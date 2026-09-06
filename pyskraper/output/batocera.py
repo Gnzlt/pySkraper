@@ -198,6 +198,9 @@ class BatoceraWriter:
                         break
         return index
 
+    def known_media_dirs(self) -> frozenset[str]:
+        return frozenset(folder for folder, _ in TAG_LAYOUT.values())
+
     def remove_entries(self, rom_paths: list[Path], system_dir: Path) -> int:
         """Drop these ROMs' ``<game>`` elements. Leaves every other entry alone."""
         target = self.gamelist_path(system_dir)

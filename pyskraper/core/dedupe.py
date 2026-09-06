@@ -78,6 +78,8 @@ class LibraryWriter(Protocol):
 
     def remove_entries(self, rom_paths: list[Path], system_dir: Path) -> int: ...
 
+    def known_media_dirs(self) -> frozenset[str]: ...
+
 
 class DuplicateKind(StrEnum):
     EXACT = "exact"

@@ -127,6 +127,71 @@ def test_clean_orphans_removes_media_and_entries_but_never_roms(tmp_path: Path) 
     assert (snes / "Other.sfc").read_bytes() == b"other"
 
 
+def test_detects_a_legacy_scraper_folder(tmp_path: Path) -> None:
+    """A folder of art no writer put there -- leftovers from a different tool."""
+    roms, snes = _library(tmp_path)
+    (snes / "imgs").mkdir()
+    (snes / "imgs" / "Game.png").write_bytes(b"art")
+    (snes / "manual").mkdir()
+    (snes / "manual" / "Game.pdf").write_bytes(b"manual")
+    report = _verify(roms, tmp_path / "c.db")
+
+    folders = {folder.name: len(files) for folder, files in report.systems[0].legacy_media}
+    assert folders == {"imgs": 1, "manual": 1}
+    assert report.legacy_media == 2
+    assert not report.clean
+
+
+def test_a_mixed_folder_is_never_treated_as_legacy_media(tmp_path: Path) -> None:
+    """One file we don't recognise, and the whole folder is left alone."""
+    roms, snes = _library(tmp_path)
+    (snes / "imgs").mkdir()
+    (snes / "imgs" / "Game.png").write_bytes(b"art")
+    (snes / "imgs" / "readme.txt").write_bytes(b"notes")
+    report = _verify(roms, tmp_path / "c.db")
+
+    assert report.systems[0].legacy_media == []
+
+
+def test_saves_and_similar_emulator_folders_are_never_touched(tmp_path: Path) -> None:
+    roms, snes = _library(tmp_path)
+    (snes / "saves").mkdir()
+    (snes / "saves" / "Game.srm.png").write_bytes(b"not actually art")
+    report = _verify(roms, tmp_path / "c.db")
+
+    assert report.systems[0].legacy_media == []
+
+
+def test_clean_orphans_removes_legacy_media_folders(tmp_path: Path) -> None:
+    roms, snes = _library(tmp_path)
+    legacy = snes / "imgs"
+    legacy.mkdir()
+    (legacy / "Game.png").write_bytes(b"art")
+    report = _verify(roms, tmp_path / "c.db")
+
+    media, entries, errors = clean_orphans(report, apply=True, writer=BatoceraWriter())
+
+    assert errors == []
+    assert media == 1
+    assert entries == 0
+    assert not legacy.exists()
+    # The writer's own layout survives untouched.
+    assert (snes / "images" / "Game-image.png").exists()
+
+
+def test_clean_orphans_without_apply_leaves_legacy_media_alone(tmp_path: Path) -> None:
+    roms, snes = _library(tmp_path)
+    legacy = snes / "imgs"
+    legacy.mkdir()
+    (legacy / "Game.png").write_bytes(b"art")
+    report = _verify(roms, tmp_path / "c.db")
+
+    media, entries, errors = clean_orphans(report, apply=False, writer=BatoceraWriter())
+
+    assert (media, entries, errors) == (1, 0, [])
+    assert legacy.exists()
+
+
 def test_no_rehash_skips_drift_detection(tmp_path: Path) -> None:
     roms, snes = _library(tmp_path)
     _verify(roms, tmp_path / "c.db")

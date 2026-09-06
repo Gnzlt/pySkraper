@@ -12,14 +12,24 @@ request:
 * **orphan media** -- artwork for a ROM that is gone.
 * **unlisted** -- a ROM the metadata file has never heard of, i.e. not scraped.
 
-Only the middle two are cleanable, and only under ``--apply``. Drift is
-reported and never acted on: this tool does not decide that a user's ROM is
-wrong.
+There is a fifth thing worth finding, though it is not drift in the library
+itself: **legacy media** -- a whole folder of art beside the ROMs that this
+writer did not put there and does not track, left over from an earlier,
+different scraper. It cannot be matched to a ROM the way ``images/`` can,
+because nothing here knows that folder's naming scheme. It is only ever
+flagged when *every* file in it looks like art or a manual; one file of an
+unrecognised kind and the folder is left alone, on the same principle as
+drift -- guessing wrong about a user's files is worse than reporting nothing.
+
+Only the middle two, plus legacy media, are cleanable, and only under
+``--apply``. Drift is reported and never acted on: this tool does not decide
+that a user's ROM is wrong.
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +42,36 @@ from .scanner import ScannedSystem
 __all__ = ["SystemReport", "VerifyReport", "clean_orphans", "verify_library"]
 
 log = logging.getLogger(__name__)
+
+# Folders no writer owns but no scraper put there either -- an emulator's own
+# save data, never art from some earlier tool. Protected regardless of what
+# any writer's layout looks like.
+_PROTECTED_DIRS = frozenset({"saves", "states", "cheats", "patches", "dlc", "updates", "bios"})
+
+# What "looks like art or a manual" means, for deciding a folder is safe to
+# remove wholesale. Deliberately narrow: a folder holding anything outside
+# this set is left alone rather than guessed about.
+_LEGACY_MEDIA_EXTENSIONS = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".webp",
+        ".tga",
+        ".mp4",
+        ".avi",
+        ".mkv",
+        ".mov",
+        ".webm",
+        ".mpg",
+        ".mpeg",
+        ".pdf",
+        ".cbz",
+        ".cbr",
+    }
+)
 
 
 @dataclass
@@ -47,10 +87,12 @@ class SystemReport:
     orphan_media: list[Path] = field(default_factory=list)
     unlisted_roms: list[Path] = field(default_factory=list)
     unreadable: list[tuple[Path, str]] = field(default_factory=list)
+    legacy_media: list[tuple[Path, list[Path]]] = field(default_factory=list)
+    """``(folder, files in it)`` for each leftover-scraper folder found."""
 
     @property
     def clean(self) -> bool:
-        return not (self.drifted or self.missing_roms or self.orphan_media or self.unreadable)
+        return not (self.drifted or self.missing_roms or self.orphan_media or self.unreadable or self.legacy_media)
 
     @property
     def orphan_bytes(self) -> int:
@@ -91,6 +133,22 @@ class VerifyReport:
     def orphan_bytes(self) -> int:
         return sum(report.orphan_bytes for report in self.systems)
 
+    @property
+    def legacy_media(self) -> int:
+        return sum(len(files) for report in self.systems for _folder, files in report.legacy_media)
+
+    @property
+    def legacy_bytes(self) -> int:
+        total = 0
+        for report in self.systems:
+            for _folder, files in report.legacy_media:
+                for path in files:
+                    try:
+                        total += path.stat().st_size
+                    except OSError:
+                        continue
+        return total
+
 
 def verify_library(
     systems: Sequence[ScannedSystem],
@@ -125,10 +183,30 @@ def verify_library(
             entry.orphan_media = sorted(
                 path for path, stem in writer.media_index(system.path).items() if stem not in stems
             )
+            _find_legacy_media(system, writer, entry)
 
         report.systems.append(entry)
 
     return report
+
+
+def _find_legacy_media(system: ScannedSystem, writer: LibraryWriter, entry: SystemReport) -> None:
+    """Whole folders of art this writer doesn't own and no ROM references.
+
+    ``writer.media_index`` already accounts for this front-end's own layout
+    (``images/``, ``videos/`` ...), so anything else sitting beside the ROMs
+    is either an earlier scraper's leftovers or something the emulator itself
+    owns (saves, cheats, patches). Only a folder where *every* file looks
+    like art or a manual is treated as the former -- one unrecognised file in
+    it and the whole folder is left alone rather than guessed about.
+    """
+    known = writer.known_media_dirs() | _PROTECTED_DIRS
+    for child in sorted(p for p in system.path.iterdir() if p.is_dir()):
+        if child.name.startswith(".") or child.name.lower() in known:
+            continue
+        files = [f for f in child.rglob("*") if f.is_file() and not f.name.startswith(".")]
+        if files and all(f.suffix.lower() in _LEGACY_MEDIA_EXTENSIONS for f in files):
+            entry.legacy_media.append((child, files))
 
 
 def _check_drift(
@@ -176,11 +254,11 @@ def clean_orphans(
     apply: bool,
     writer: LibraryWriter | None = None,
 ) -> tuple[int, int, list[str]]:
-    """Remove orphan media and dead metadata entries.
+    """Remove orphan media, legacy-scraper folders, and dead metadata entries.
 
-    Never touches a ROM: everything removed here is regenerable by re-scraping,
-    which is exactly why it is safe to remove at all. Returns
-    ``(media removed, entries removed, errors)``.
+    Never touches a ROM: everything removed here is either regenerable by
+    re-scraping or, for legacy media, was never this tool's output to begin
+    with. Returns ``(media removed, entries removed, errors)``.
     """
     media_removed = 0
     entries_removed = 0
@@ -195,6 +273,15 @@ def clean_orphans(
                     errors.append(f"{path}: {exc}")
                     continue
             media_removed += 1
+
+        for folder, files in system.legacy_media:
+            if apply:
+                try:
+                    shutil.rmtree(folder)
+                except OSError as exc:
+                    errors.append(f"{folder}: {exc}")
+                    continue
+            media_removed += len(files)
 
         if system.missing_roms and writer is not None:
             if apply:

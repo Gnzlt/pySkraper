@@ -67,6 +67,15 @@ class Writer(Protocol):
         """
         ...
 
+    def known_media_dirs(self) -> frozenset[str]:
+        """Subfolder names this writer itself puts media in, e.g. ``images``.
+
+        Lets ``verify`` tell "this front-end's own layout" apart from leftover
+        folders a different, earlier scraper wrote -- without ``core`` having
+        to know what any writer's layout looks like.
+        """
+        ...
+
 
 _REGISTRY: dict[str, type] = {}
 
