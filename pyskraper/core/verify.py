@@ -16,10 +16,11 @@ There is a fifth thing worth finding, though it is not drift in the library
 itself: **legacy media** -- a whole folder of art beside the ROMs that this
 writer did not put there and does not track, left over from an earlier,
 different scraper. It cannot be matched to a ROM the way ``images/`` can,
-because nothing here knows that folder's naming scheme. It is only ever
-flagged when *every* file in it looks like art or a manual; one file of an
-unrecognised kind and the folder is left alone, on the same principle as
-drift -- guessing wrong about a user's files is worse than reporting nothing.
+because nothing here knows that folder's naming scheme, so it is judged on
+two conservative tests instead: *every* file in it looks like art or a
+manual, and *nothing* in it is referenced by the metadata file. Either one
+failing leaves the whole folder alone, on the same principle as drift --
+guessing wrong about a user's files is worse than reporting nothing.
 
 Only the middle two, plus legacy media, are cleanable, and only under
 ``--apply``. Drift is reported and never acted on: this tool does not decide
@@ -191,22 +192,37 @@ def verify_library(
 
 
 def _find_legacy_media(system: ScannedSystem, writer: LibraryWriter, entry: SystemReport) -> None:
-    """Whole folders of art this writer doesn't own and no ROM references.
+    """Whole folders of art this writer doesn't own and the gamelist doesn't use.
 
     ``writer.media_index`` already accounts for this front-end's own layout
     (``images/``, ``videos/`` ...), so anything else sitting beside the ROMs
     is either an earlier scraper's leftovers or something the emulator itself
-    owns (saves, cheats, patches). Only a folder where *every* file looks
-    like art or a manual is treated as the former -- one unrecognised file in
-    it and the whole folder is left alone rather than guessed about.
+    owns (saves, cheats, patches).
+
+    Two conditions, and a folder must clear both. Every file in it looks like
+    art or a manual -- one unrecognised file and the folder is left alone
+    rather than guessed about. And nothing in it is referenced by the
+    metadata file: an entry this tool never rewrote can still point at the
+    old scraper's folder, and art the front-end is displaying is in use no
+    matter who wrote it.
     """
+    try:
+        referenced = writer.referenced_media(system.path)
+    except Exception:  # unreadable metadata means "assume everything is in use"
+        log.warning("%s: could not read media references - skipping legacy-media detection", system.folder)
+        return
+
     known = writer.known_media_dirs() | _PROTECTED_DIRS
     for child in sorted(p for p in system.path.iterdir() if p.is_dir()):
         if child.name.startswith(".") or child.name.lower() in known:
             continue
         files = [f for f in child.rglob("*") if f.is_file() and not f.name.startswith(".")]
-        if files and all(f.suffix.lower() in _LEGACY_MEDIA_EXTENSIONS for f in files):
-            entry.legacy_media.append((child, files))
+        if not files or not all(f.suffix.lower() in _LEGACY_MEDIA_EXTENSIONS for f in files):
+            continue
+        if any(f.resolve() in referenced for f in files):
+            log.debug("%s: %s is still referenced by the gamelist - leaving it", system.folder, child.name)
+            continue
+        entry.legacy_media.append((child, files))
 
 
 def _check_drift(

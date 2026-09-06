@@ -80,6 +80,8 @@ class LibraryWriter(Protocol):
 
     def known_media_dirs(self) -> frozenset[str]: ...
 
+    def referenced_media(self, system_dir: Path) -> set[Path]: ...
+
 
 class DuplicateKind(StrEnum):
     EXACT = "exact"

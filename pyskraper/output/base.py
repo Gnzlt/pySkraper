@@ -76,6 +76,15 @@ class Writer(Protocol):
         """
         ...
 
+    def referenced_media(self, system_dir: Path) -> set[Path]:
+        """Every media file the metadata file currently points at.
+
+        Includes paths outside this writer's own layout, which is the point:
+        an entry this tool never rewrote may still reference an older
+        scraper's folder, and that art is in use however it got there.
+        """
+        ...
+
 
 _REGISTRY: dict[str, type] = {}
 

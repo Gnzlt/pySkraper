@@ -162,6 +162,57 @@ def test_saves_and_similar_emulator_folders_are_never_touched(tmp_path: Path) ->
     assert report.systems[0].legacy_media == []
 
 
+def test_a_folder_the_gamelist_still_points_at_is_not_legacy_media(tmp_path: Path) -> None:
+    """The case that would have deleted art the device is displaying.
+
+    A game this tool never matched keeps whatever `<image>` the old scraper
+    wrote. Extension-wise the folder looks exactly like leftovers -- the only
+    thing saying otherwise is the reference.
+    """
+    roms, snes = _library(tmp_path)
+    (snes / "imgs").mkdir()
+    (snes / "imgs" / "Old.png").write_bytes(b"art in use")
+    (snes / "Old.sfc").write_bytes(b"never matched")
+    (snes / "gamelist.xml").write_text(
+        '<?xml version="1.0"?>\n<gameList>\n'
+        "  <game><path>./Game.sfc</path><name>Game</name><id>7</id></game>\n"
+        "  <game><path>./Old.sfc</path><name>Old</name><image>./imgs/Old.png</image></game>\n"
+        "</gameList>\n"
+    )
+    report = _verify(roms, tmp_path / "c.db")
+
+    assert report.systems[0].legacy_media == []
+    assert (snes / "imgs" / "Old.png").exists()
+
+
+def test_one_referenced_file_protects_the_whole_folder(tmp_path: Path) -> None:
+    """Half in use is not half deletable -- the folder is one unit."""
+    roms, snes = _library(tmp_path)
+    (snes / "imgs").mkdir()
+    (snes / "imgs" / "Used.png").write_bytes(b"art in use")
+    (snes / "imgs" / "Unused.png").write_bytes(b"art nothing points at")
+    (snes / "gamelist.xml").write_text(
+        '<?xml version="1.0"?>\n<gameList>\n'
+        "  <game><path>./Game.sfc</path><image>./imgs/Used.png</image></game>\n"
+        "</gameList>\n"
+    )
+    report = _verify(roms, tmp_path / "c.db")
+
+    assert report.systems[0].legacy_media == []
+
+
+def test_an_unreadable_gamelist_protects_legacy_media(tmp_path: Path) -> None:
+    """Can't tell what's in use, so nothing is removable."""
+    roms, snes = _library(tmp_path)
+    (snes / "imgs").mkdir()
+    (snes / "imgs" / "Game.png").write_bytes(b"art")
+    (snes / "gamelist.xml").write_text("<gameList><game><path>truncated")
+    report = _verify(roms, tmp_path / "c.db")
+
+    assert report.systems[0].legacy_media == []
+    assert (snes / "imgs" / "Game.png").exists()
+
+
 def test_clean_orphans_removes_legacy_media_folders(tmp_path: Path) -> None:
     roms, snes = _library(tmp_path)
     legacy = snes / "imgs"

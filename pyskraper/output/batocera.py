@@ -201,6 +201,33 @@ class BatoceraWriter:
     def known_media_dirs(self) -> frozenset[str]:
         return frozenset(folder for folder, _ in TAG_LAYOUT.values())
 
+    def referenced_media(self, system_dir: Path) -> set[Path]:
+        """Resolve every media tag in the gamelist to an absolute path.
+
+        Deliberately reads the tag's text rather than reconstructing the path
+        from `TAG_LAYOUT`: an entry written by a different scraper points
+        wherever it points, and the whole reason to ask is to find out where.
+        """
+        target = self.gamelist_path(system_dir)
+        if not target.exists():
+            return set()
+        try:
+            root = ET.parse(target).getroot()
+        except ET.ParseError:
+            # Same stance as `list_entries`: a corrupt gamelist is reported by
+            # the caller, not a reason to claim nothing is referenced -- which
+            # here would read as "safe to delete".
+            log.warning("Could not parse %s - treating every media file as in use", target)
+            raise
+
+        referenced: set[Path] = set()
+        for game in root.findall("game"):
+            for tag in TAG_LAYOUT:
+                node = game.find(tag)
+                if node is not None and node.text and node.text.strip():
+                    referenced.add((system_dir / node.text.strip()).resolve())
+        return referenced
+
     def remove_entries(self, rom_paths: list[Path], system_dir: Path) -> int:
         """Drop these ROMs' ``<game>`` elements. Leaves every other entry alone."""
         target = self.gamelist_path(system_dir)
