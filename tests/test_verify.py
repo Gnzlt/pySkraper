@@ -213,6 +213,43 @@ def test_an_unreadable_gamelist_protects_legacy_media(tmp_path: Path) -> None:
     assert (snes / "imgs" / "Game.png").exists()
 
 
+def test_an_empty_leftover_folder_counts_as_legacy_media(tmp_path: Path) -> None:
+    """Nothing in it to lose, and this system files its ROMs at the top level."""
+    roms, snes = _library(tmp_path)
+    (snes / "manual").mkdir()
+    report = _verify(roms, tmp_path / "c.db")
+
+    assert [folder.name for folder, _files in report.systems[0].legacy_media] == ["manual"]
+
+    clean_orphans(report, apply=True, writer=BatoceraWriter())
+    assert not (snes / "manual").exists()
+
+
+def test_an_empty_folder_is_kept_when_roms_live_in_subfolders(tmp_path: Path) -> None:
+    """An A-to-Z library owns nothing under Q yet. That is structure, not residue."""
+    roms = tmp_path / "roms"
+    gba = roms / "gba"
+    (gba / "A").mkdir(parents=True)
+    (gba / "A" / "Astro.gba").write_bytes(b"rom")
+    (gba / "Q").mkdir()  # empty letter
+    report = _verify(roms, tmp_path / "c.db")
+
+    assert report.systems[0].legacy_media == []
+    assert (gba / "Q").exists()
+
+
+def test_a_folder_of_roms_is_never_legacy_media(tmp_path: Path) -> None:
+    """The property that matters most: ROM folders are not art folders."""
+    roms = tmp_path / "roms"
+    gba = roms / "gba"
+    (gba / "A").mkdir(parents=True)
+    (gba / "A" / "Astro.gba").write_bytes(b"rom")
+    report = _verify(roms, tmp_path / "c.db")
+
+    assert report.systems[0].legacy_media == []
+    assert (gba / "A" / "Astro.gba").exists()
+
+
 def test_clean_orphans_removes_legacy_media_folders(tmp_path: Path) -> None:
     roms, snes = _library(tmp_path)
     legacy = snes / "imgs"

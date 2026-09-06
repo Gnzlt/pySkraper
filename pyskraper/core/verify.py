@@ -205,6 +205,11 @@ def _find_legacy_media(system: ScannedSystem, writer: LibraryWriter, entry: Syst
     metadata file: an entry this tool never rewrote can still point at the
     old scraper's folder, and art the front-end is displaying is in use no
     matter who wrote it.
+
+    An empty folder clears both tests trivially and has no data to lose, so it
+    counts as leftovers -- unless this system keeps its ROMs in subfolders. A
+    library filed A/ to Z/ has an empty letter for the letter it owns nothing
+    under yet, and that is structure, not residue.
     """
     try:
         referenced = writer.referenced_media(system.path)
@@ -212,12 +217,21 @@ def _find_legacy_media(system: ScannedSystem, writer: LibraryWriter, entry: Syst
         log.warning("%s: could not read media references - skipping legacy-media detection", system.folder)
         return
 
+    root = system.path.resolve()
+    filed_in_subfolders = any(rom.resolve().parent != root for rom in system.roms)
+
     known = writer.known_media_dirs() | _PROTECTED_DIRS
     for child in sorted(p for p in system.path.iterdir() if p.is_dir()):
         if child.name.startswith(".") or child.name.lower() in known:
             continue
         files = [f for f in child.rglob("*") if f.is_file() and not f.name.startswith(".")]
-        if not files or not all(f.suffix.lower() in _LEGACY_MEDIA_EXTENSIONS for f in files):
+        if not files:
+            if filed_in_subfolders:
+                log.debug("%s: %s is empty but this system files ROMs in subfolders", system.folder, child.name)
+                continue
+            entry.legacy_media.append((child, []))
+            continue
+        if not all(f.suffix.lower() in _LEGACY_MEDIA_EXTENSIONS for f in files):
             continue
         if any(f.resolve() in referenced for f in files):
             log.debug("%s: %s is still referenced by the gamelist - leaving it", system.folder, child.name)
