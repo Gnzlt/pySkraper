@@ -194,7 +194,7 @@ PROFILES: dict[str, DeviceProfile] = {
         name="Mini",
         vendor="Miyoo",
         screen=(640, 480),
-        notes="SigmaStar SSD202D, , 128 MB RAM, 3.5in 640x480 4:3 IPS.",
+        notes="SigmaStar SSD202D, , 128 MB RAM, 2.8in 640x480 4:3 IPS.",
         defaults=_screen(640, 480),
     ),
     "miyoo-mini-plus": DeviceProfile(
