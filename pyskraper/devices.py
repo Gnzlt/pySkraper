@@ -189,6 +189,22 @@ PROFILES: dict[str, DeviceProfile] = {
         notes="Allwinner A523/T527, 1 GB RAM, 4.96in 1280x720 16:9 IPS.",
         defaults=_screen(1280, 720),
     ),
+    "miyoo-mini": DeviceProfile(
+        id="miyoo-mini",
+        name="Mini",
+        vendor="Miyoo",
+        screen=(640, 480),
+        notes="SigmaStar SSD202D, , 128 MB RAM, 3.5in 640x480 4:3 IPS.",
+        defaults=_screen(640, 480),
+    ),
+    "miyoo-mini-plus": DeviceProfile(
+        id="miyoo-mini-plus",
+        name="Mini Plus",
+        vendor="Miyoo",
+        screen=(640, 480),
+        notes="SigmaStar SSD202D, 128 MB RAM, 3.5in 640x480 4:3 IPS.",
+        defaults=_screen(640, 480),
+    ),
     "miyoo-flip": DeviceProfile(
         id="miyoo-flip",
         name="Flip",
