@@ -102,7 +102,7 @@ pySkraper/
 │   │   ├── base.py                # Writer protocol
 │   │   └── batocera.py            # KNULLI/Batocera gamelist.xml (the only writer)
 │   └── systems.py                 # folder name <-> systemeid <-> extensions
-└── tests/                         # one module per unit, all API calls mocked
+└── tests/                         # test_cli_e2e.py drives the commands; the rest are edge cases
 ```
 
 ---
@@ -110,10 +110,16 @@ pySkraper/
 ## Running Tests
 
 ```bash
-pytest -v                    # unit tests -- all API calls mocked with respx
+pytest -v                    # the whole suite -- all API calls mocked with respx
 ```
 
-The `integration` marker is registered and deselected by default via `addopts` in
+Most behaviour is tested end to end in `tests/test_cli_e2e.py`: the real commands run against a
+temporary ROM tree and config, with only ScreenScraper faked, and the tests check exit codes,
+output, gamelist.xml, media files and the requests spent. Add new tests there. The other modules
+keep unit tests only for logic with many edge cases (parsing, tags, hashing, retries, quota maths,
+dedupe rules).
+
+The `live` marker is registered and deselected by default via `addopts` in
 `pyproject.toml`, which is what guarantees a plain `pytest` can never spend quota. **No test
 currently carries the mark** -- the machinery exists ahead of the first live test, deliberately,
 because that guarantee is worth having before one is written rather than after.
@@ -147,7 +153,7 @@ Please read these before submitting changes:
 4. **Hash-first identification -- always.** Don't reintroduce a hashing size cap or make filename
    matching the primary path.
 5. **All API interactions in tests are `respx`-mocked.** Anything touching the live API is marked
-   `integration` and deselected by default. Never run a test suite against real ScreenScraper
+   `live` and deselected by default. Never run a test suite against real ScreenScraper
    credentials or a real SD card.
 
 ---

@@ -37,7 +37,7 @@ jobs:
       - name: Types
         run: mypy pyskraper/
 
-      # No `-m integration`: that marker is deselected by pyproject, which is
+      # No `-m live`: that marker is deselected by pyproject, which is
       # what keeps a plain test run from spending real ScreenScraper quota.
       - name: Tests
         run: pytest

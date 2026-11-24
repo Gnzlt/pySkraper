@@ -57,16 +57,6 @@ async def _identify(rom: RomFile, config: Config | None = None, cache: Cache | N
 
 
 @respx.mock
-async def test_hash_match_stops_the_chain(tmp_path: Path) -> None:
-    route = respx.get(f"{BASE}/jeuInfos.php").mock(return_value=_ok({"jeu": GAME, "ssuser": SSUSER}))
-    result, _ = await _identify(_rom(tmp_path))
-
-    assert result.method is ResolutionMethod.HASH
-    assert route.call_count == 1, "a content match must not be followed by name lookups"
-    assert route.calls[0].request.url.params["md5"]
-
-
-@respx.mock
 async def test_hashing_runs_off_the_event_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Hashing must not be done inline in the coroutine.
 

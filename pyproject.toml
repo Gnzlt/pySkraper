@@ -73,9 +73,9 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
-    "integration: hits the live ScreenScraper API and spends quota (deselected by default)",
+    "live: hits the live ScreenScraper API and spends quota (deselected by default)",
 ]
-addopts = "-m 'not integration'"
+addopts = "-m 'not live'"
 filterwarnings = [
     # getpass cannot control terminal echo under pytest's piped stdin. The
     # wizard tests drive it deliberately; the warning says nothing useful.

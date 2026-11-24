@@ -18,8 +18,8 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,images]"
 
 pytest                                        # full suite, ~5s, no network
-pytest tests/test_scraper.py -v               # one module
-pytest tests/test_scraper.py::test_name       # one test
+pytest tests/test_cli_e2e.py -v               # one module
+pytest tests/test_cli_e2e.py::test_name       # one test
 ruff check . && ruff format --check .
 mypy pyskraper/
 ```
@@ -116,8 +116,15 @@ established against the real service and are expensive to rediscover.
 
 ## Testing and style
 
-- **Unit tests never touch the network.** API interactions are `respx`-mocked. Anything hitting the
-  live API is marked `integration` and deselected by `addopts` in `pyproject.toml`, which is what
+- **Test through the CLI first.** `tests/test_cli_e2e.py` runs the real `pyskraper` commands
+  (Typer's `CliRunner`) against a temporary card and config, with only ScreenScraper faked
+  (`FakeScreenScraper`, on respx), and checks what a user gets: exit codes, output, gamelist.xml,
+  the media on the card, the log file and the requests spent. A new behaviour gets a test there.
+  Unit tests are kept only for logic with many edge cases that the CLI can't reach cheaply:
+  parsing, tags, region selection, hashing, archives, quota maths, retries, config validation,
+  dedupe rules, atomic writes. When a CLI test makes a unit test redundant, delete the unit test.
+- **No test touches the network.** API interactions are `respx`-mocked. Anything hitting the
+  live API would be marked `live` and is deselected by `addopts` in `pyproject.toml`, which is what
   guarantees a bare `pytest` can never spend real quota. No test currently carries the mark; the
   machinery exists ahead of the first one, deliberately.
 - **Never run the scraper against real credentials or a real SD card** unless explicitly asked. It

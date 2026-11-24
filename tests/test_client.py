@@ -44,60 +44,6 @@ def _client(retries: int = 0) -> ScreenScraperClient:
 
 
 @respx.mock
-async def test_user_info_primes_the_governor() -> None:
-    respx.get(f"{BASE}/ssuserInfos.php").mock(return_value=_ok({"ssuser": _ssuser()}))
-    async with _client() as client:
-        snapshot = await client.user_info()
-    assert snapshot.max_threads == 3
-    assert snapshot.requests_today == 42
-    assert client.governor.concurrency == 3
-
-
-@respx.mock
-async def test_every_request_carries_auth_and_json_output() -> None:
-    route = respx.get(f"{BASE}/ssuserInfos.php").mock(return_value=_ok({"ssuser": _ssuser()}))
-    async with _client() as client:
-        await client.user_info()
-
-    params = route.calls[0].request.url.params
-    assert params["devid"] == "dev"
-    assert params["devpassword"] == "devpw"
-    assert params["ssid"] == "user"
-    assert params["sspassword"] == "userpw"
-    assert params["softname"] == "pySkraper"
-    assert params["output"] == "json"
-
-
-@respx.mock
-async def test_game_info_sends_all_three_hashes() -> None:
-    """Hash-first identification: three hashes on one request, not three requests."""
-    route = respx.get(f"{BASE}/jeuInfos.php").mock(return_value=_ok({"jeu": {"id": "1"}, "ssuser": _ssuser()}))
-    async with _client() as client:
-        await client.game_info(
-            systeme_id=4, rom_name="Game.sfc", rom_size=524288, crc="B19ED489", md5="abc", sha1="def"
-        )
-
-    params = route.calls[0].request.url.params
-    assert params["crc"] == "B19ED489"
-    assert params["md5"] == "abc"
-    assert params["sha1"] == "def"
-    assert params["systemeid"] == "4"
-    assert params["romtaille"] == "524288"
-    assert params["romtype"] == "rom"
-
-
-@respx.mock
-async def test_empty_parameters_are_omitted_entirely() -> None:
-    route = respx.get(f"{BASE}/jeuInfos.php").mock(return_value=_ok({"jeu": {}, "ssuser": _ssuser()}))
-    async with _client() as client:
-        await client.game_info(systeme_id=4, rom_name="Game.sfc", serial=None, game_id=None)
-
-    params = route.calls[0].request.url.params
-    assert "serialnum" not in params
-    assert "gameid" not in params
-
-
-@respx.mock
 async def test_quota_is_harvested_from_every_response() -> None:
     """The thread grant moves with server load, so it is re-read continuously
     rather than trusted from startup."""

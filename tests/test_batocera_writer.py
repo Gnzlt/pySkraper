@@ -51,29 +51,6 @@ def _result(system_dir: Path, stem: str = "Super Mario World", *, with_media: bo
     return ScrapeResult(rom=rom, metadata=metadata, media=media, method=ResolutionMethod.HASH)
 
 
-def test_writes_a_valid_gamelist(tmp_path: Path) -> None:
-    writer = BatoceraWriter()
-    target = writer.write([_result(tmp_path)], tmp_path)
-
-    root = ET.parse(target).getroot()
-    assert root.tag == "gameList"
-    game = root.find("game")
-    assert game is not None
-    assert game.findtext("path") == "./Super Mario World.sfc"
-    assert game.findtext("name") == "Super Mario World"
-    assert game.findtext("genre") == "Platform"
-    assert game.findtext("releasedate") == "19901121T000000"
-
-
-def test_media_paths_are_relative_with_the_expected_suffixes(tmp_path: Path) -> None:
-    writer = BatoceraWriter()
-    target = writer.write([_result(tmp_path)], tmp_path)
-    game = ET.parse(target).getroot().find("game")
-    assert game is not None
-    assert game.findtext("image") == "./images/Super Mario World-image.png"
-    assert game.findtext("thumbnail") == "./images/Super Mario World-thumb.png"
-
-
 def test_plan_paths_follows_the_batocera_layout(tmp_path: Path) -> None:
     writer = BatoceraWriter()
     result = _result(tmp_path)
@@ -97,18 +74,6 @@ def test_undownloaded_media_is_not_referenced(tmp_path: Path) -> None:
     assert game is not None
     assert game.find("image") is None
     assert game.findtext("thumbnail") is not None
-
-
-def test_hashes_and_scraper_id_are_written_back(tmp_path: Path) -> None:
-    """Re-scrapes short-circuit to a direct gameid lookup, and dedupe/verify
-    need this data to work from."""
-    writer = BatoceraWriter()
-    target = writer.write([_result(tmp_path)], tmp_path)
-    game = ET.parse(target).getroot().find("game")
-    assert game is not None
-    assert game.findtext("crc32") == "B19ED489"
-    assert game.findtext("md5") == "0838e531fe22c077528febe14cb3ff7c"
-    assert game.findtext("id") == "1234"
 
 
 def test_device_written_fields_survive_a_rescrape(tmp_path: Path) -> None:
@@ -163,13 +128,6 @@ def test_games_not_in_this_run_are_left_alone(tmp_path: Path) -> None:
     assert paths == {"./Another Game.sfc", "./Super Mario World.sfc"}
     other = next(g for g in root.findall("game") if g.findtext("path") == "./Another Game.sfc")
     assert other.findtext("playcount") == "3"
-
-
-def test_rescraping_does_not_duplicate_entries(tmp_path: Path) -> None:
-    writer = BatoceraWriter(merge=True)
-    writer.write([_result(tmp_path)], tmp_path)
-    target = writer.write([_result(tmp_path)], tmp_path)
-    assert len(ET.parse(target).getroot().findall("game")) == 1
 
 
 def test_corrupt_gamelist_is_preserved_not_destroyed(tmp_path: Path) -> None:

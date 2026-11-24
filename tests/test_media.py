@@ -28,18 +28,6 @@ def downloader() -> MediaDownloader:
 
 
 @respx.mock
-async def test_downloads_and_marks_the_asset(tmp_path: Path, downloader: MediaDownloader) -> None:
-    respx.get(URL).mock(return_value=httpx.Response(200, content=b"PNGDATA"))
-    asset = _asset(tmp_path / "images" / "game-image.png")
-
-    outcome = await downloader.fetch(asset)
-
-    assert outcome.written
-    assert asset.downloaded
-    assert (tmp_path / "images" / "game-image.png").read_bytes() == b"PNGDATA"
-
-
-@respx.mock
 async def test_existing_file_is_skipped_unless_overwriting(tmp_path: Path) -> None:
     target = tmp_path / "game-image.png"
     target.write_bytes(b"already here")
@@ -142,22 +130,6 @@ async def test_identical_urls_are_downloaded_once_and_copied(tmp_path: Path) -> 
     assert len(outcomes) == 2
     # Only the real transfer counts toward bytes downloaded.
     assert sum(o.bytes_written for o in outcomes) == len(b"BOXART")
-
-
-@respx.mock
-async def test_distinct_urls_are_all_fetched(tmp_path: Path) -> None:
-    other = "https://media.screenscraper.fr/other.png"
-    respx.get(URL).mock(return_value=httpx.Response(200, content=b"A"))
-    respx.get(other).mock(return_value=httpx.Response(200, content=b"B"))
-
-    a = MediaAsset(tag="image", key="ss", url=URL, fmt="png")
-    a.target = tmp_path / "a.png"
-    b = MediaAsset(tag="marquee", key="wheel", url=other, fmt="png")
-    b.target = tmp_path / "b.png"
-
-    await MediaDownloader(httpx.AsyncClient()).fetch_all([a, b])
-    assert a.target.read_bytes() == b"A"
-    assert b.target.read_bytes() == b"B"
 
 
 @respx.mock
