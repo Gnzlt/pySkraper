@@ -14,7 +14,7 @@ pySkraper uses the model for.
 | Anbernic | RGCubeXX | 720×720 |
 | TrimUI | Brick | 1024×768 |
 | TrimUI | Smart Pro, Smart Pro S | 1280×720 |
-| Miyoo | Flip | 640×480 |
+| Miyoo | Mini, Mini Plus, Flip | 640×480 |
 | Powkiddy | RGB30 | 720×720 |
 | Powkiddy | X55 | 1280×720 |
 | Powkiddy | V20, V90S | 640×480 |

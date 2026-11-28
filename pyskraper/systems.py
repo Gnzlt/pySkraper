@@ -64,7 +64,7 @@ _DISC = ".chd .cue .iso .m3u .pbp .bin .ccd .img .mdf .gdi"
 
 SYSTEMS: tuple[SystemInfo, ...] = (
     # --- Nintendo ---
-    _s("nes", 3, "Nintendo Entertainment System", ".nes .unf .unif .fds .zip .7z", aliases=("famicom",)),
+    _s("nes", 3, "Nintendo Entertainment System", ".nes .unf .unif .fds .zip .7z", aliases=("famicom", "fc")),
     _s("fds", 106, "Famicom Disk System", ".fds .zip .7z"),
     _s("snes", 4, "Super Nintendo", ".sfc .smc .fig .swc .zip .7z", aliases=("sfc", "supernes")),
     _s("satellaview", 107, "Satellaview", ".sfc .smc .bs .zip .7z"),
@@ -78,7 +78,7 @@ SYSTEMS: tuple[SystemInfo, ...] = (
     _s("pokemini", 211, "Pokemon Mini", ".min .zip .7z"),
     _s("gw", 52, "Game & Watch", ".mgw .zip .7z", aliases=("gameandwatch",)),
     # --- Sega ---
-    _s("megadrive", 1, "Sega Mega Drive / Genesis", ".md .gen .bin .smd .zip .7z", aliases=("genesis",)),
+    _s("megadrive", 1, "Sega Mega Drive / Genesis", ".md .gen .bin .smd .zip .7z", aliases=("genesis", "md",)),
     _s("mastersystem", 2, "Sega Master System", ".sms .zip .7z", aliases=("sms",)),
     _s("gamegear", 21, "Sega Game Gear", ".gg .zip .7z", aliases=("gg",)),
     _s("sg1000", 109, "Sega SG-1000", ".sg .zip .7z", aliases=("sg-1000",)),
@@ -130,7 +130,7 @@ SYSTEMS: tuple[SystemInfo, ...] = (
     _s("intellivision", 115, "Intellivision", ".int .bin .rom .zip .7z"),
     _s("vectrex", 102, "Vectrex", ".vec .bin .zip .7z"),
     _s("channelf", 80, "Fairchild Channel F", ".bin .chf .zip .7z"),
-    _s("wonderswan", 45, "WonderSwan", ".ws .zip .7z", aliases=("wswan",)),
+    _s("wonderswan", 45, "WonderSwan", ".ws .zip .7z", aliases=("wswan", "ws")),
     _s("wonderswancolor", 46, "WonderSwan Color", ".wsc .zip .7z", aliases=("wswanc",)),
     _s("megaduck", 90, "Mega Duck", ".bin .zip .7z"),
     _s("3do", 29, "3DO", _DISC, disc=True),
